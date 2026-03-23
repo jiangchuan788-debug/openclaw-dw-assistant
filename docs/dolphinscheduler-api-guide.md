@@ -67,18 +67,10 @@ result = start_single_task(
 
 | 配置项 | 值 |
 |--------|-----|
-| API 地址 | `http://10.20.47.19:18789/dolphinscheduler`（内网直连） |
+| API 地址 | `http://172.20.0.235:12345/dolphinscheduler`（内网映射） |
 | Token | `0cad23ded0f0e942381fc9717c1581a8` |
 | 用户 | jiangchuanchen (ADMIN_USER) |
 | 租户 | dolphinscheduler |
-
-### 其他连接方式
-
-**本地开发（Windows SSH 隧道）：**
-```bash
-ssh -N -f -L 18789:10.20.47.19:18789 -i id_rsa bi@139.224.104.53 -p36000
-```
-然后设置环境变量：`DS_BASE_URL=http://127.0.0.1:18789/dolphinscheduler`
 
 ### 项目 Code
 
