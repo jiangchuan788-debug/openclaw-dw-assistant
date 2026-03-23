@@ -92,8 +92,8 @@ schtasks /Create /TN "OpenClaw Alert Bridge" `
 ## 🔧 测试
 
 ```bash
-# 测试数据库连接
-python check_alerts.py
+# 测试数据库连接和查询告警
+python test_db_connection.py
 
 # 调试模式
 python debug_alerts.py
