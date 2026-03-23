@@ -1,0 +1,4 @@
+【任务名称】数据质量校验任务_4377
+【告警时间】Mon Mar 23 2026 06:35:05 GMT+0800 (China Standard Time)
+【告警级别】P1
+【告警内容】已恢复 ods_capital_bi_report_apportion_after ods_capital_bi_report_apportion_after_amt(分摊后bi海外科目余额报表)

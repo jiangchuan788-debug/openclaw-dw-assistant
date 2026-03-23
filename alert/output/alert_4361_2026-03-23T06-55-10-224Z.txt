@@ -1,0 +1,5 @@
+【任务名称】数据质量校验任务_4361
+【告警时间】Mon Mar 23 2026 05:30:27 GMT+0800 (China Standard Time)
+【告警级别】P1
+【告警内容】ods_capital_bi_report_apportion_after ods_capital_bi_report_apportion_after_amt(分摊后bi海外科目余额报表)不一致
+【执行语句】SELECT bi_report_apportion_after_business_country AS country, sum(bi_report_apportion_after_amount) amt FROM cw_catalog.capital.bi_report_apportion_after GROUP BY 1 ORDER BY 1;  SELECT bi_report_apportion_after_business_country AS country, sum(bi_report_apportion_after_amount) amt FROM ods_security.ods_capital_bi_report_apportion_after GROUP BY 1 ORDER BY 1;

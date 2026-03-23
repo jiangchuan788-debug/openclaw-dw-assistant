@@ -1,0 +1,5 @@
+【任务名称】数据质量校验任务_4369
+【告警时间】Mon Mar 23 2026 05:30:29 GMT+0800 (China Standard Time)
+【告警级别】P1
+【告警内容】ods_capital_bi_report_apportion_category ods_capital_bi_report_apportion_category_cnt(bi运营成本分摊报表分类表)不一致
+【执行语句】SELECT count(1) as cnt FROM cw_catalog.capital.bi_report_apportion_category;  SELECT count(1) AS cnt FROM ods_security.ods_capital_bi_report_apportion_category;
