@@ -63,11 +63,27 @@ result = start_single_task(
 
 ## 环境信息
 
-### API 端点
+### 连接方式
+
+**方式 1：直连（本地部署）**
+```
+API 地址: http://127.0.0.1:12345/dolphinscheduler
+```
+
+**方式 2：SSH 隧道（推荐，远程 DS 服务）**
+```bash
+# 建立 SSH 隧道（本地 18789 映射到远程 DS 服务）
+ssh -N -f -L 18789:10.20.47.19:18789 -i id_rsa bi@139.224.104.53 -p36000 -o ServerAliveInterval=60 TCPKeepAlive=yes
+
+# API 地址改为本地隧道端口
+API 地址: http://127.0.0.1:18789/dolphinscheduler
+```
+
+### 默认配置
 
 | 配置项 | 值 |
 |--------|-----|
-| API 地址 | `http://127.0.0.1:12345/dolphinscheduler` |
+| API 地址 | `http://127.0.0.1:18789/dolphinscheduler`（SSH隧道） |
 | Token | `0cad23ded0f0e942381fc9717c1581a8` |
 | 用户 | jiangchuanchen (ADMIN_USER) |
 | 租户 | dolphinscheduler |

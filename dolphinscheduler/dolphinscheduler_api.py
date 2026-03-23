@@ -13,6 +13,7 @@ import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
+import os  # 新增：支持环境变量配置
 import requests
 import json
 from datetime import datetime
@@ -22,16 +23,19 @@ from typing import Optional, Dict, Any
 class DolphinSchedulerClient:
     """DolphinScheduler API 客户端"""
     
-    def __init__(self, base_url: str, token: str):
+    def __init__(self, base_url: str = None, token: str = None):
         """
         初始化客户端
         
         Args:
-            base_url: DolphinScheduler API 地址，如 http://127.0.0.1:12345/dolphinscheduler
-            token: API Token
+            base_url: DolphinScheduler API 地址
+                      直连: http://127.0.0.1:12345/dolphinscheduler
+                      SSH隧道: http://127.0.0.1:18789/dolphinscheduler (本地端口映射)
+            token: API Token，默认使用配置文件中的 token
         """
-        self.base_url = base_url.rstrip('/')
-        self.token = token
+        # 默认使用 SSH 隧道配置（本地 18789 端口映射到远程 DS 服务）
+        self.base_url = (base_url or os.environ.get('DS_BASE_URL', 'http://127.0.0.1:18789/dolphinscheduler')).rstrip('/')
+        self.token = token or os.environ.get('DS_TOKEN', '0cad23ded0f0e942381fc9717c1581a8')
         self.headers = {
             'token': self.token,
             'Content-Type': 'application/x-www-form-urlencoded'
