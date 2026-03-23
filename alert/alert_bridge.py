@@ -17,12 +17,12 @@ import time
 import json
 
 # ================= 1. 配置区 =================
-# 数据库配置 (连刚才建好的本地隧道)
-DB_HOST = '127.0.0.1' 
-DB_PORT = 3333
-DB_USER = 'e_ds'      #  请替换为真实账号
-DB_PASS = 'hAN0Hax1lop'     #  请替换为真实密码
-DB_NAME = 'wattrel' #  请替换为真实的数据库名
+# 数据库配置 (告警系统内网映射地址)
+DB_HOST = '172.20.0.235'
+DB_PORT = 13306
+DB_USER = 'e_ds'              # 数据库账号
+DB_PASS = 'hAN0Hax1lop'       # 数据库密码
+DB_NAME = 'wattrel'           # 数据库名
 
 # OpenClaw 本地 Webhook 地址（使用 /hooks/wattrel/wake 端点）
 OPENCLAW_WEBHOOK = "http://127.0.0.1:18789/hooks/wattrel/wake"

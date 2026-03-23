@@ -33,12 +33,14 @@ _alert
 
 编辑 `alert_bridge.py`：
 ```python
-DB_HOST = '127.0.0.1'      # 数据库地址
-DB_PORT = 3333              # 端口
+# 数据库配置 (告警系统内网映射地址)
+DB_HOST = '172.20.0.235'    # 内网映射地址
+DB_PORT = 13306              # 映射端口
 DB_USER = 'e_ds'            # 用户名
 DB_PASS = '密码'            # 密码
 DB_NAME = 'wattrel'         # 数据库名
 
+# OpenClaw 本地 Webhook 地址
 OPENCLAW_WEBHOOK = "http://127.0.0.1:18789/hooks/wattrel/wake"
 OPENCLAW_HOOK_TOKEN = "MySecretAlertToken123"
 ```
