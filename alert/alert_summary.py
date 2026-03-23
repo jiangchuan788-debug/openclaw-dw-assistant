@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-精简版告警统计脚本
+精简版告警脚本 - 保持原有格式
 - 只统计最近两天的告警
 - 只关注：数据量不一致、表记录数不一致
 - 过滤掉"已恢复"的告警
-- 输出简洁报告
+- 原封不动输出告警内容
 
 作者：OpenClaw
 日期：2026-03-23
@@ -14,9 +14,10 @@
 import urllib.request
 import json
 import sys
+import subprocess
 from datetime import datetime, timedelta
 
-# DolphinScheduler 告警数据库配置
+# 配置
 DB_CONFIG = {
     'host': '172.20.0.235',
     'port': 13306,
@@ -25,7 +26,6 @@ DB_CONFIG = {
     'database': 'wattrel'
 }
 
-# OpenClaw Webhook 配置
 WEBHOOK_URL = 'http://127.0.0.1:18789/hooks/wattrel/wake'
 WEBHOOK_TOKEN = 'wattrel-webhook-secret-token-2026'
 
@@ -50,16 +50,8 @@ def send_alert(message):
 
 
 def query_recent_alerts():
-    """
-    查询最近两天的告警
-    只查询：数据量不一致、表记录数不一致
-    过滤：已恢复的告警
-    """
-    # 计算两天前的时间
+    """查询最近两天的数据不一致告警"""
     two_days_ago = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S')
-    
-    # 使用 Node.js 查询（因为容器内有 Node 但没有 Python MySQL 库）
-    import subprocess
     
     js_code = f"""
 const mysql = require('/tmp/node_modules/mysql2/promise');
@@ -75,7 +67,7 @@ async function query() {{
     }});
     
     const [rows] = await conn.execute(`
-        SELECT id, content, type, status, created_at
+        SELECT id, content, type, created_at
         FROM wattrel_quality_alert
         WHERE created_at >= ?
           AND status = 0
@@ -112,121 +104,42 @@ query().catch(e => {{ console.error(e); process.exit(1); }});
         return []
 
 
-def classify_alert(content):
+def format_alert(alert):
     """
-    分类告警类型
-    
-    Returns:
-        tuple: (alert_type, table_name, detail)
+    格式化告警消息 - 保持原有格式
+    和 alert_bridge_node.js 一致的格式
     """
-    content_lower = content.lower()
+    alert_id = alert.get('id')
+    content = alert.get('content', '')
+    created_at = alert.get('created_at')
+    alert_type = alert.get('type', '1')
     
-    # 判断类型
-    if '数量不一致' in content or 'count' in content_lower or 'cnt' in content_lower:
-        alert_type = '表记录数不一致'
-    elif '不一致' in content:
-        alert_type = '数据量不一致'
-    else:
-        alert_type = '其他不一致'
+    # 解析内容，提取主要部分和SQL
+    main_content = content
+    sql_content = ''
     
-    # 提取表名（在"不一致"之前的表名）
-    table_name = '未知表'
+    if '【执行语句】' in content:
+        parts = content.split('【执行语句】', 1)
+        main_content = parts[0].strip()
+        sql_content = parts[1].strip()
     
-    # 尝试匹配 "表名 不一致" 或 "表名 xxx 不一致"
-    import re
-    patterns = [
-        r'(\w+)\s+.*不一致',
-        r'(ods_\w+|dwd_\w+|dws_\w+|ads_\w+|dwb_\w+)',
-        r'(biz_\w+|dim_\w+)'
-    ]
+    # 格式化时间
+    try:
+        dt = datetime.strptime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ')
+        time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+    except:
+        time_str = str(created_at)
     
-    for pattern in patterns:
-        match = re.search(pattern, content, re.IGNORECASE)
-        if match:
-            table_name = match.group(1)
-            break
-    
-    # 提取期望值/实际值（如果有）
-    detail = ''
-    if '期望值' in content and '实际值' in content:
-        import re
-        match = re.search(r'期望值\s*(\d+)\s*实际值\s*(\d+)', content)
-        if match:
-            expected = match.group(1)
-            actual = match.group(2)
-            diff = int(actual) - int(expected)
-            detail = f'期望: {expected}, 实际: {actual}, 差值: {diff:+d}'
-    
-    return alert_type, table_name, detail
-
-
-def format_alert_message(alerts):
-    """格式化告警消息"""
-    if not alerts:
-        return None
-    
-    # 按类型分组统计
-    count_alerts = []  # 记录数不一致
-    data_alerts = []   # 数据量不一致
-    
-    for alert in alerts:
-        content = alert.get('content', '')
-        alert_type, table_name, detail = classify_alert(content)
-        
-        alert_info = {
-            'id': alert.get('id'),
-            'type': alert_type,
-            'table': table_name,
-            'detail': detail,
-            'created_at': alert.get('created_at'),
-            'content': content[:100] + '...' if len(content) > 100 else content
-        }
-        
-        if '记录数' in alert_type or '数量' in alert_type:
-            count_alerts.append(alert_info)
-        else:
-            data_alerts.append(alert_info)
-    
-    # 构建消息
+    # 构建消息 - 保持原有格式
     lines = [
-        '🚨 数据质量告警报告（最近两天）',
-        '',
-        f'📊 总计: {len(alerts)} 条未处理告警',
-        f'   • 表记录数不一致: {len(count_alerts)} 条',
-        f'   • 数据量不一致: {len(data_alerts)} 条',
-        ''
+        f"【任务名称】数据质量校验任务_{alert_id}",
+        f"【告警时间】{time_str}",
+        f"【告警级别】P{alert_type}",
+        f"【告警内容】{main_content}",
     ]
     
-    # 表记录数不一致
-    if count_alerts:
-        lines.append('📋 表记录数不一致告警:')
-        for i, alert in enumerate(count_alerts[:10], 1):  # 最多显示10条
-            lines.append(f'{i}. {alert["table"]}')
-            if alert['detail']:
-                lines.append(f'   {alert["detail"]}')
-            lines.append(f'   ⏰ {alert["created_at"]}')
-            lines.append('')
-        
-        if len(count_alerts) > 10:
-            lines.append(f'   ... 还有 {len(count_alerts) - 10} 条')
-            lines.append('')
-    
-    # 数据量不一致
-    if data_alerts:
-        lines.append('📋 数据量不一致告警:')
-        for i, alert in enumerate(data_alerts[:10], 1):
-            lines.append(f'{i}. {alert["table"]} - {alert["type"]}')
-            if alert['detail']:
-                lines.append(f'   {alert["detail"]}')
-            lines.append(f'   ⏰ {alert["created_at"]}')
-            lines.append('')
-        
-        if len(data_alerts) > 10:
-            lines.append(f'   ... 还有 {len(data_alerts) - 10} 条')
-            lines.append('')
-    
-    lines.append('---')
-    lines.append('💡 请检查上述表的数据同步状态')
+    if sql_content:
+        lines.append(f"【执行语句】{sql_content}")
     
     return '\n'.join(lines)
 
@@ -234,7 +147,7 @@ def format_alert_message(alerts):
 def main():
     """主函数"""
     print('=' * 70)
-    print('🚨 精简版告警统计（最近两天）')
+    print('🚨 精简版告警报告（最近两天）')
     print('=' * 70)
     print()
     
@@ -242,7 +155,7 @@ def main():
     print('🔍 查询最近两天的数据不一致告警...')
     alerts = query_recent_alerts()
     
-    print(f'✅ 查询完成，找到 {len(alerts)} 条告警\n')
+    print(f'✅ 找到 {len(alerts)} 条告警\n')
     
     if not alerts:
         message = '🎉 最近两天没有数据不一致告警！\n\n所有数据质量检查正常。'
@@ -250,19 +163,32 @@ def main():
         send_alert(message)
         return
     
-    # 格式化消息
-    message = format_alert_message(alerts)
+    # 发送报告头部
+    header = f"🚨 数据质量告警报告（最近两天）\n\n📊 发现 {len(alerts)} 条未处理的数据不一致告警\n"
+    print(header)
+    send_alert(header)
     
-    # 输出到控制台
-    print(message)
-    print()
+    # 逐条发送告警（保持原有格式）
+    print('=' * 70)
+    for i, alert in enumerate(alerts, 1):
+        formatted = format_alert(alert)
+        
+        print(f"\n[{i}/{len(alerts)}]")
+        print('-' * 70)
+        print(formatted)
+        print()
+        
+        # 发送单条告警
+        if send_alert(formatted):
+            print(f"✅ 已发送")
+        else:
+            print(f"❌ 发送失败")
+        print()
     
-    # 发送到钉钉
-    print('📤 正在发送告警到钉钉群...')
-    if send_alert(message):
-        print('✅ 发送成功！')
-    else:
-        print('❌ 发送失败')
+    # 发送结束标记
+    footer = f"{'=' * 50}\n💡 以上共 {len(alerts)} 条数据不一致告警，请检查数据同步状态\n{'=' * 50}"
+    print(footer)
+    send_alert(footer)
     
     print('=' * 70)
 
