@@ -33,8 +33,8 @@ class DolphinSchedulerClient:
                       SSH隧道: http://127.0.0.1:18789/dolphinscheduler (本地端口映射)
             token: API Token，默认使用配置文件中的 token
         """
-        # 默认使用 SSH 隧道配置（本地 18789 端口映射到远程 DS 服务）
-        self.base_url = (base_url or os.environ.get('DS_BASE_URL', 'http://127.0.0.1:18789/dolphinscheduler')).rstrip('/')
+        # 默认配置：直连 DS 内网地址（10.20.47.19:18789）
+        self.base_url = (base_url or os.environ.get('DS_BASE_URL', 'http://10.20.47.19:18789/dolphinscheduler')).rstrip('/')
         self.token = token or os.environ.get('DS_TOKEN', '0cad23ded0f0e942381fc9717c1581a8')
         self.headers = {
             'token': self.token,
