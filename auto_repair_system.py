@@ -50,7 +50,7 @@ DAYS_LIMIT = 10
 
 
 class Logger:
-    """操作日志记录器"""
+    """操作日志记录器 - 同时发送执行过程到群里"""
     
     def __init__(self):
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -61,15 +61,45 @@ class Logger:
         self.detail_log = f"{self.log_dir}/repair_detail_{self.timestamp}.log"
         self.commands_log = f"{self.log_dir}/commands_{self.timestamp}.log"
         
-    def log(self, message, level='INFO'):
-        """记录主日志"""
+        # 执行过程缓存，用于最后发送完整报告
+        self.execution_steps = []
+        self.commands_history = []
+        
+    def log(self, message, level='INFO', send_to_group=True):
+        """记录主日志，同时发送到群里"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        log_line = f"[{timestamp}] [{level}] {message}\n"
+        log_line = f"[{timestamp}] [{level}] {message}"
         
+        # 写入文件
         with open(self.main_log, 'a', encoding='utf-8') as f:
-            f.write(log_line)
+            f.write(log_line + '\n')
         
-        print(log_line.strip())
+        # 打印到控制台
+        print(log_line)
+        
+        # 缓存执行步骤
+        self.execution_steps.append({
+            'time': timestamp,
+            'level': level,
+            'message': message
+        })
+        
+        # 发送到钉钉群
+        if send_to_group:
+            self._send_to_dingtalk(message)
+    
+    def _send_to_dingtalk(self, message):
+        """发送消息到钉钉群"""
+        try:
+            cmd = [
+                'openclaw', 'message', 'send',
+                '--channel', 'dingtalk-connector',
+                '--target', f'group:{DINGTALK_CONVERSATION_ID}',
+                '--message', message
+            ]
+            subprocess.run(cmd, capture_output=True, timeout=10)
+        except:
+            pass  # 发送失败不影响主流程
     
     def log_detail(self, data):
         """记录详细数据（JSON格式）"""
@@ -93,6 +123,62 @@ class Logger:
         
         with open(self.commands_log, 'a', encoding='utf-8') as f:
             f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        
+        # 缓存命令历史
+        self.commands_history.append(record)
+        
+        # 发送命令到群里（简化显示）
+        short_cmd = command[:100] + '...' if len(command) > 100 else command
+        self._send_to_dingtalk(f"📝 执行命令: {short_cmd}")
+    
+    def send_final_report(self, duration, repaired_count, failed_count):
+        """发送完整的执行报告到群里"""
+        report = [
+            "📋 智能修复执行完成报告",
+            "=" * 50,
+            f"⏱️ 总耗时: {duration:.1f}秒",
+            f"✅ 修复成功: {repaired_count} 个表",
+            f"❌ 修复失败: {failed_count} 个表",
+            "",
+            "📌 执行步骤摘要:",
+        ]
+        
+        # 添加关键步骤
+        for step in self.execution_steps[-20:]:  # 最后20步
+            if step['level'] in ['INFO', 'ERROR']:
+                report.append(f"  [{step['time']}] {step['message']}")
+        
+        report.extend([
+            "",
+            "🔧 执行命令记录:",
+        ])
+        
+        # 添加执行的命令
+        for i, cmd_record in enumerate(self.commands_history[-10:], 1):  # 最后10个命令
+            cmd = cmd_record['command']
+            short_cmd = cmd[:80] + '...' if len(cmd) > 80 else cmd
+            report.append(f"  {i}. {short_cmd}")
+        
+        report.extend([
+            "",
+            f"📁 详细日志: {self.log_dir}",
+            "=" * 50,
+        ])
+        
+        # 发送完整报告
+        full_report = '\n'.join(report)
+        
+        # 如果报告太长，分段发送
+        if len(full_report) > 1500:
+            # 发送摘要
+            summary = '\n'.join(report[:10])  # 前10行
+            self._send_to_dingtalk(summary)
+            
+            # 发送详细结果
+            details = f"✅ 成功: {repaired_count} | ❌ 失败: {failed_count}\n📁 日志: {self.log_dir}"
+            self._send_to_dingtalk(details)
+        else:
+            self._send_to_dingtalk(full_report)
 
 
 class AlertScanner:
@@ -626,8 +712,8 @@ class AutoRepairSystem:
         self.logger.log(f"✅ 智能修复流程完成，耗时: {duration:.1f}秒")
         self.logger.log("=" * 80)
         
-        # 发送完成通知
-        self.scanner.send_dingtalk_message(f"🎉 自动修复流程已完成！\n⏱️ 耗时: {duration:.1f}秒\n📁 详细日志: {self.logger.log_dir}")
+        # 发送完整执行报告到群里
+        self.logger.send_final_report(duration, len(completed), len(failed))
 
 
 def main():
