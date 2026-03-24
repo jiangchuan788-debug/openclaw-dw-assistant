@@ -412,8 +412,130 @@ class WorkflowRunner:
         except:
             return False
     
+    def get_workflow_tasks(self, project_code, workflow_code):
+        """获取工作流的任务定义列表"""
+        try:
+            # 获取工作流详情
+            curl_cmd = f"""curl -s "http://172.20.0.235:12345/dolphinscheduler/projects/{project_code}/process-definition/{workflow_code}" \
+  -H "token: 0cad23ded0f0e942381fc9717c1581a8"""
+            
+            result = subprocess.run(curl_cmd, shell=True, capture_output=True, text=True, timeout=15)
+            
+            if result.returncode == 0:
+                response = json.loads(result.stdout)
+                if response.get('code') == 0:
+                    data = response.get('data', {})
+                    tasks = data.get('taskDefinitionList', [])
+                    return tasks
+            return []
+        except Exception as e:
+            self.logger.log(f"获取任务定义失败: {e}", 'ERROR')
+            return []
+    
+    def find_task_for_table(self, tasks, table_name):
+        """在工作流任务中找到与表相关的任务"""
+        for task in tasks:
+            task_name = task.get('name', '')
+            task_params = task.get('taskParams', '{}')
+            
+            # 解析任务参数
+            if isinstance(task_params, str):
+                try:
+                    task_params = json.loads(task_params)
+                except:
+                    task_params = {}
+            
+            # 检查SQL内容是否包含表名
+            raw_script = task_params.get('rawScript', '') if isinstance(task_params, dict) else ''
+            
+            # 匹配逻辑：任务名包含表名，或SQL包含表名
+            if table_name.lower() in task_name.lower() or table_name.lower() in raw_script.lower():
+                return {
+                    'task_code': task.get('code'),
+                    'task_name': task_name,
+                    'table': table_name
+                }
+        
+        # 如果没找到精确匹配，返回包含DWD/DWB/ODS等关键字的任务
+        for task in tasks:
+            task_name = task.get('name', '')
+            # 根据表前缀匹配任务类型
+            if 'dwd' in table_name.lower() and 'DWD' in task_name:
+                return {
+                    'task_code': task.get('code'),
+                    'task_name': task_name,
+                    'table': table_name,
+                    'note': '按DWD类型匹配'
+                }
+            elif 'dwb' in table_name.lower() and 'DWB' in task_name:
+                return {
+                    'task_code': task.get('code'),
+                    'task_name': task_name,
+                    'table': table_name,
+                    'note': '按DWB类型匹配'
+                }
+            elif 'ods' in table_name.lower() and 'ODS' in task_name:
+                return {
+                    'task_code': task.get('code'),
+                    'task_name': task_name,
+                    'table': table_name,
+                    'note': '按ODS类型匹配'
+                }
+        
+        return None
+    
+    def run_single_task(self, project_code, workflow_code, task_code, task_name, table_name, dt):
+        """只启动工作流中的特定任务"""
+        self.logger.log(f"启动单任务: {task_name} (表: {table_name}, dt: {dt})")
+        
+        # 构建curl命令，使用startNodeList指定只启动特定任务
+        curl_cmd = f"""curl -s -X POST "http://172.20.0.235:12345/dolphinscheduler/projects/{project_code}/executors/start-process-instance" \
+  -H "token: 0cad23ded0f0e942381fc9717c1581a8" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "processDefinitionCode={workflow_code}" \
+  -d "failureStrategy=CONTINUE" \
+  -d "warningType=NONE" \
+  -d "warningGroupId=0" \
+  -d "processInstancePriority=MEDIUM" \
+  -d "workerGroup=default" \
+  -d "environmentCode=154818922491872" \
+  -d "tenantCode=dolphinscheduler" \
+  -d "taskDependType=TASK_ONLY" \
+  -d "runMode=RUN_MODE_SERIAL" \
+  -d "execType=START_PROCESS" \
+  -d "dryRun=0" \
+  -d "scheduleTime=" \
+  -d "startNodeList={task_code}" \
+  -d "startParams={{\\"dt\\":\\"{dt}\\"}}" \
+  --connect-timeout 30"""
+        
+        self.logger.log_command(f"启动单任务: {task_name} (Code: {task_code})")
+        
+        try:
+            result = subprocess.run(curl_cmd, shell=True, capture_output=True, text=True, timeout=35)
+            
+            if result.returncode == 0:
+                try:
+                    response = json.loads(result.stdout)
+                    if response.get('code') == 0:
+                        self.repair_count[table_name] += 1
+                        self.logger.log(f"✅ 单任务启动成功: {task_name}, 实例ID: {response.get('data')}")
+                        return True
+                    else:
+                        self.logger.log(f"❌ 单任务启动失败: {response.get('msg')}", 'ERROR')
+                        return False
+                except json.JSONDecodeError:
+                    self.logger.log(f"❌ 解析响应失败: {result.stdout}", 'ERROR')
+                    return False
+            else:
+                self.logger.log(f"❌ curl 执行失败: {result.stderr}", 'ERROR')
+                return False
+        except Exception as e:
+            self.logger.log(f"❌ 启动异常: {e}", 'ERROR')
+            return False
+    
     def run_workflow(self, table_info):
-        """运行单个工作流 - 使用 curl 命令"""
+        """运行工作流 - 只启动与表相关的特定任务"""
         table_name = table_info['table']
         workflow = table_info['workflow']
         dt = table_info.get('dt')
@@ -428,9 +550,51 @@ class WorkflowRunner:
         project_code = workflow['project_code']
         workflow_code = workflow['workflow_code']
         
-        self.logger.log(f"启动工作流: {workflow['workflow_name']} (表: {table_name}, dt: {dt})")
+        self.logger.log(f"查找工作流任务: {workflow['workflow_name']} (表: {table_name})")
         
-        # 使用 curl 命令启动工作流
+        # 1. 获取工作流的任务定义
+        tasks = self.get_workflow_tasks(project_code, workflow_code)
+        
+        if not tasks:
+            self.logger.log(f"工作流 {workflow['workflow_name']} 没有任务定义", 'ERROR')
+            return False
+        
+        self.logger.log(f"工作流包含 {len(tasks)} 个任务，查找与 {table_name} 相关的任务...")
+        
+        # 2. 找到与表相关的任务
+        matched_task = self.find_task_for_table(tasks, table_name)
+        
+        if not matched_task:
+            self.logger.log(f"表 {table_name} 在工作流中没有匹配的任务", 'WARN')
+            # 降级为启动整个工作流
+            self.logger.log(f"降级方案：启动整个工作流...")
+            return self.run_full_workflow(table_info)
+        
+        self.logger.log(f"找到匹配任务: {matched_task['task_name']} (Code: {matched_task['task_code']})")
+        if matched_task.get('note'):
+            self.logger.log(f"匹配备注: {matched_task['note']}")
+        
+        # 3. 只启动这个特定任务
+        return self.run_single_task(
+            project_code, 
+            workflow_code, 
+            matched_task['task_code'],
+            matched_task['task_name'],
+            table_name,
+            dt
+        )
+    
+    def run_full_workflow(self, table_info):
+        """降级方案：启动整个工作流（当找不到特定任务时使用）"""
+        table_name = table_info['table']
+        workflow = table_info['workflow']
+        dt = table_info.get('dt')
+        
+        project_code = workflow['project_code']
+        workflow_code = workflow['workflow_code']
+        
+        self.logger.log(f"[降级方案] 启动完整工作流: {workflow['workflow_name']} (表: {table_name}, dt: {dt})")
+        
         curl_cmd = f"""curl -s -X POST "http://172.20.0.235:12345/dolphinscheduler/projects/{project_code}/executors/start-process-instance" \
   -H "token: 0cad23ded0f0e942381fc9717c1581a8" \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -447,10 +611,8 @@ class WorkflowRunner:
   -d "execType=START_PROCESS" \
   -d "dryRun=0" \
   -d "scheduleTime=" \
-  -d "startParams={{\"dt\":\"{dt}\"}}" \
+  -d "startParams={{\\"dt\\":\\"{dt}\\"}}" \
   --connect-timeout 30"""
-        
-        self.logger.log_command(curl_cmd)
         
         try:
             result = subprocess.run(curl_cmd, shell=True, capture_output=True, text=True, timeout=35)
@@ -460,19 +622,19 @@ class WorkflowRunner:
                     response = json.loads(result.stdout)
                     if response.get('code') == 0:
                         self.repair_count[table_name] += 1
-                        self.logger.log(f"工作流启动成功: {workflow['workflow_name']}, 实例ID: {response.get('data')}")
+                        self.logger.log(f"✅ 工作流启动成功: {workflow['workflow_name']}, 实例ID: {response.get('data')}")
                         return True
                     else:
-                        self.logger.log(f"工作流启动失败: {response.get('msg')}", 'ERROR')
+                        self.logger.log(f"❌ 工作流启动失败: {response.get('msg')}", 'ERROR')
                         return False
                 except json.JSONDecodeError:
-                    self.logger.log(f"解析响应失败: {result.stdout}", 'ERROR')
+                    self.logger.log(f"❌ 解析响应失败: {result.stdout}", 'ERROR')
                     return False
             else:
-                self.logger.log(f"curl 执行失败: {result.stderr}", 'ERROR')
+                self.logger.log(f"❌ curl 执行失败: {result.stderr}", 'ERROR')
                 return False
         except Exception as e:
-            self.logger.log(f"启动异常: {e}", 'ERROR')
+            self.logger.log(f"❌ 启动异常: {e}", 'ERROR')
             return False
     
     def run_repair_workflows(self, tables_with_workflow):
