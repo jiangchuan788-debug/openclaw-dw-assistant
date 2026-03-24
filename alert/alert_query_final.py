@@ -98,33 +98,31 @@ query().catch(e => {{ console.error(e); process.exit(1); }});
 
 def send_to_dingtalk(message):
     """
-    发送消息到钉钉群 - 使用 sessions_send（已验证可靠）
+    发送消息到钉钉群 - 使用 openclaw message send（已验证可用）
     """
     try:
-        # 使用OpenClaw的sessions_send功能
-        import urllib.request
+        # 使用 openclaw CLI 发送消息
+        import subprocess
         
-        url = "http://127.0.0.1:18789/api/v1/sessions/send"
-        data = {
-            "sessionKey": DINGTALK_SESSION_KEY,
-            "message": message,
-            "timeoutSeconds": 10
-        }
-        
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST'
+        result = subprocess.run(
+            [
+                'openclaw', 'message', 'send',
+                '--channel', 'dingtalk-connector',
+                '--target', 'group:cidune9y06rl1j0uelxqielqw==',
+                '--message', message
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15
         )
         
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            # 即使返回timeout，消息也可能已送达
+        if 'Sent via DingTalk' in result.stdout or result.returncode == 0:
             return True
+        else:
+            print(f"   发送失败: {result.stderr}")
+            return False
     except Exception as e:
         print(f"   发送异常: {e}")
-        # 如果API调用失败，尝试直接打印（调试用途）
         return False
 
 
