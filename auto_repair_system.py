@@ -433,7 +433,8 @@ class WorkflowRunner:
             return []
     
     def find_task_for_table(self, tasks, table_name):
-        """在工作流任务中找到与表相关的任务"""
+        """在工作流任务中找到处理特定表的精确任务"""
+        # 首先尝试精确匹配：任务名或SQL内容包含完整表名
         for task in tasks:
             task_name = task.get('name', '')
             task_params = task.get('taskParams', '{}')
@@ -445,42 +446,35 @@ class WorkflowRunner:
                 except:
                     task_params = {}
             
-            # 检查SQL内容是否包含表名
+            # 检查SQL内容
             raw_script = task_params.get('rawScript', '') if isinstance(task_params, dict) else ''
             
-            # 匹配逻辑：任务名包含表名，或SQL包含表名
-            if table_name.lower() in task_name.lower() or table_name.lower() in raw_script.lower():
+            # 精确匹配：SQL中包含表名
+            if table_name.lower() in raw_script.lower():
                 return {
                     'task_code': task.get('code'),
                     'task_name': task_name,
-                    'table': table_name
+                    'table': table_name,
+                    'match_type': '精确匹配(SQL包含表名)'
                 }
         
-        # 如果没找到精确匹配，返回包含DWD/DWB/ODS等关键字的任务
+        # 其次尝试任务名匹配
         for task in tasks:
             task_name = task.get('name', '')
-            # 根据表前缀匹配任务类型
-            if 'dwd' in table_name.lower() and 'DWD' in task_name:
-                return {
-                    'task_code': task.get('code'),
-                    'task_name': task_name,
-                    'table': table_name,
-                    'note': '按DWD类型匹配'
-                }
-            elif 'dwb' in table_name.lower() and 'DWB' in task_name:
-                return {
-                    'task_code': task.get('code'),
-                    'task_name': task_name,
-                    'table': table_name,
-                    'note': '按DWB类型匹配'
-                }
-            elif 'ods' in table_name.lower() and 'ODS' in task_name:
-                return {
-                    'task_code': task.get('code'),
-                    'task_name': task_name,
-                    'table': table_name,
-                    'note': '按ODS类型匹配'
-                }
+            
+            # 提取表名的关键部分进行匹配
+            # 例如：dwd_asset_account_repay -> account_repay
+            table_parts = table_name.split('_')
+            if len(table_parts) >= 3:
+                # 尝试匹配关键部分
+                key_part = '_'.join(table_parts[2:])  # account_repay
+                if key_part.lower() in task_name.lower():
+                    return {
+                        'task_code': task.get('code'),
+                        'task_name': task_name,
+                        'table': table_name,
+                        'match_type': f'部分匹配(任务名包含{key_part})'
+                    }
         
         return None
     
