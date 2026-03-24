@@ -321,28 +321,27 @@ class TableAnalyzer:
         """查找表对应的工作流"""
         self.logger.log("=== 步骤4: 查找表对应的工作流 ===")
         
-        # 这里简化处理，实际应该调用search_table.py
-        # 为了演示，使用预定义的映射
+        # 使用预定义的精确映射（从CSV获取）
         workflow_mapping = {
-            'dwb_asset_period_info': {
+            'dwd_asset_account_repay': {
                 'project_code': '158514956085248',
-                'workflow_code': '158514957297664',
-                'workflow_name': 'DWB'
+                'workflow_code': '158514956979200',  # DWD 工作流
+                'workflow_name': 'DWD'
             },
             'dwd_asset_account_recharge': {
                 'project_code': '158514956085248',
-                'workflow_code': '158514957656064',
-                'workflow_name': 'DWD(D-1)'
-            },
-            'dwd_asset_account_repay': {
-                'project_code': '158514956085248',
-                'workflow_code': '158514957337600',
-                'workflow_name': '国内-数仓工作流(D-1)'
+                'workflow_code': '158514956979200',  # DWD 工作流
+                'workflow_name': 'DWD'
             },
             'dwd_asset_qsq_erp_withhold': {
                 'project_code': '158514956085248',
-                'workflow_code': '158514958374912',
-                'workflow_name': '国内-数仓工作流(H-1)'
+                'workflow_code': '158514956979200',  # DWD 工作流
+                'workflow_name': 'DWD'
+            },
+            'dwb_asset_period_info': {
+                'project_code': '158514956085248',
+                'workflow_code': '158514957297664',  # DWB 工作流
+                'workflow_name': 'DWB'
             }
         }
         
