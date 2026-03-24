@@ -14,7 +14,8 @@ import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 import os  # 新增：支持环境变量配置
-import requests
+import urllib.request
+import urllib.parse
 import json
 from datetime import datetime
 from typing import Optional, Dict, Any

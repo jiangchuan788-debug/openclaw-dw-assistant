@@ -413,7 +413,7 @@ class WorkflowRunner:
             return False
     
     def run_workflow(self, table_info):
-        """运行单个工作流"""
+        """运行单个工作流 - 使用 curl 命令"""
         table_name = table_info['table']
         workflow = table_info['workflow']
         dt = table_info.get('dt')
@@ -428,27 +428,49 @@ class WorkflowRunner:
         project_code = workflow['project_code']
         workflow_code = workflow['workflow_code']
         
-        cmd = [
-            'python3', f'{DOLPHIN_DIR}/dolphinscheduler_api.py',
-            '--project', project_code,
-            '--process', workflow_code,
-            '--dt', dt
-        ]
-        
         self.logger.log(f"启动工作流: {workflow['workflow_name']} (表: {table_name}, dt: {dt})")
-        self.logger.log_command(' '.join(cmd))
+        
+        # 使用 curl 命令启动工作流
+        curl_cmd = f"""curl -s -X POST "http://172.20.0.235:12345/dolphinscheduler/projects/{project_code}/executors/start-process-instance" \
+  -H "token: 0cad23ded0f0e942381fc9717c1581a8" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "processDefinitionCode={workflow_code}" \
+  -d "failureStrategy=CONTINUE" \
+  -d "warningType=NONE" \
+  -d "warningGroupId=0" \
+  -d "processInstancePriority=MEDIUM" \
+  -d "workerGroup=default" \
+  -d "environmentCode=154818922491872" \
+  -d "tenantCode=dolphinscheduler" \
+  -d "taskDependType=TASK_POST" \
+  -d "runMode=RUN_MODE_SERIAL" \
+  -d "execType=START_PROCESS" \
+  -d "dryRun=0" \
+  -d "scheduleTime=" \
+  -d "startParams={{\"dt\":\"{dt}\"}}" \
+  --connect-timeout 30"""
+        
+        self.logger.log_command(curl_cmd)
         
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            success = result.returncode == 0
+            result = subprocess.run(curl_cmd, shell=True, capture_output=True, text=True, timeout=35)
             
-            if success:
-                self.repair_count[table_name] += 1
-                self.logger.log(f"工作流启动成功: {workflow['workflow_name']}")
+            if result.returncode == 0:
+                try:
+                    response = json.loads(result.stdout)
+                    if response.get('code') == 0:
+                        self.repair_count[table_name] += 1
+                        self.logger.log(f"工作流启动成功: {workflow['workflow_name']}, 实例ID: {response.get('data')}")
+                        return True
+                    else:
+                        self.logger.log(f"工作流启动失败: {response.get('msg')}", 'ERROR')
+                        return False
+                except json.JSONDecodeError:
+                    self.logger.log(f"解析响应失败: {result.stdout}", 'ERROR')
+                    return False
             else:
-                self.logger.log(f"工作流启动失败: {result.stderr}", 'ERROR')
-            
-            return success
+                self.logger.log(f"curl 执行失败: {result.stderr}", 'ERROR')
+                return False
         except Exception as e:
             self.logger.log(f"启动异常: {e}", 'ERROR')
             return False

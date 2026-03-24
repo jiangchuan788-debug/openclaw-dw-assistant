@@ -1,0 +1,13 @@
+[
+  {
+    "table": "dwd_asset_account_repay",
+    "alert_id": 4434,
+    "content": "dwd_asset_account_repay 数量不一致  期望值 127317  实际值127404  差值为 -87 \r【执行语句】SELECT COUNT(*) as cnt FROM ods.`ods_qsq_erp_account_repay` WHERE account_repay_update_at >= '2026-03-23' AND account_repay_update_at < '2026-03-24' \r SELECT COUNT(*) as cnt FROM dwd.dwd_asset_account_repay WHERE account_repay_update_at >= '2026-03-23' AND account_repay_update_at < '2026-03-24'",
+    "dt": "2026-03-23",
+    "workflow": {
+      "project_code": "158514956085248",
+      "workflow_code": "158514957337600",
+      "workflow_name": "国内-数仓工作流(D-1)"
+    }
+  }
+]
