@@ -12,6 +12,7 @@
 日期：2026-03-23
 """
 
+import os
 import urllib.request
 import json
 
