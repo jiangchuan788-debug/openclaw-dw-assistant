@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-03-24T19:03:55.315547",
+  "tasks": [
+    {
+      "alert_id": 4437,
+      "table": "dwd_asset_account_repay",
+      "dt": "2026-03-23",
+      "level": "P1",
+      "workflow_name": "DWD",
+      "workflow_code": "158514956979200",
+      "task_name": "dwd_asset_account_repay",
+      "task_code": "158514956981265",
+      "status": "success",
+      "instance_id": 168877751756480
+    }
+  ],
+  "fuyan_results": [
+    {
+      "name": "\u6bcf\u65e5\u590d\u9a8c\u5168\u7ea7\u522b\u6570\u636e(W-1)",
+      "id": 168877792881344,
+      "status": "success"
+    },
+    {
+      "name": "\u6bcf\u5c0f\u65f6\u590d\u9a8c1\u7ea7\u8868\u6570\u636e(D-1)",
+      "id": 168877804539584,
+      "status": "success"
+    },
+    {
+      "name": "\u6bcf\u5c0f\u65f6\u590d\u9a8c2\u7ea7\u8868\u6570\u636e(D-1)",
+      "id": 168877816307392,
+      "status": "success"
+    },
+    {
+      "name": "\u4e24\u5c0f\u65f6\u590d\u9a8c3\u7ea7\u8868\u6570\u636e(D-1)",
+      "id": 168877828153024,
+      "status": "success"
+    },
+    {
+      "name": "\u6bcf\u5468\u590d\u9a8c\u5168\u7ea7\u522b\u6570\u636e(M-3)",
+      "id": 168877839777472,
+      "status": "success"
+    },
+    {
+      "name": "\u6bcf\u670811\u65e5\u590d\u9a8c\u5168\u7ea7\u522b\u6570\u636e(Y-2)",
+      "id": 168877851548352,
+      "status": "success"
+    }
+  ],
+  "fixed": [
+    "dwd_asset_account_repay"
+  ],
+  "failed": []
+}

@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-03-25T06:46:05+08:00",
+  "workflow": "DWD",
+  "workflow_code": "158514956979200",
+  "success_count": 5,
+  "failed_count": 0,
+  "instances": [
+    {"task": "dwd_asset_account_recharge", "dt": "2026-03-24", "instance_id": "168921036074688", "status": "success"},
+    {"task": "dwd_asset_qsq_erp_withhold", "dt": "2026-03-24", "instance_id": "168921039399616", "status": "success"},
+    {"task": "dwd_asset_account_repay", "dt": "2026-03-24", "instance_id": "168921042721472", "status": "success"},
+    {"task": "dwd_asset_account_repay", "dt": "2026-03-23", "instance_id": "168921046044352", "status": "success"},
+    {"task": "dwd_asset_clean_clearing_trans", "dt": "2026-03-17", "instance_id": "168921049373376", "status": "success"}
+  ]
+}

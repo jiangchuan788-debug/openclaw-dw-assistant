@@ -36,7 +36,7 @@ class DolphinSchedulerClient:
         """
         # 默认配置：DS 内网映射地址（172.20.0.235:12345）
         self.base_url = (base_url or os.environ.get('DS_BASE_URL', 'http://172.20.0.235:12345/dolphinscheduler')).rstrip('/')
-        self.token = token or os.environ.get('DS_TOKEN', '0cad23ded0f0e942381fc9717c1581a8')
+        self.token = token or os.environ.get('DS_TOKEN', '3d62a58e9207011abf769dbe25a408fc')
         self.headers = {
             'token': self.token,
             'Content-Type': 'application/x-www-form-urlencoded'
@@ -328,7 +328,7 @@ def start_workflow_simple(
     """
     client = DolphinSchedulerClient(
         base_url="http://127.0.0.1:12345/dolphinscheduler",
-        token="0cad23ded0f0e942381fc9717c1581a8"
+        token="3d62a58e9207011abf769dbe25a408fc"
     )
     
     custom_params = {}
@@ -365,7 +365,7 @@ def start_single_task(
     """
     client = DolphinSchedulerClient(
         base_url="http://127.0.0.1:12345/dolphinscheduler",
-        token="0cad23ded0f0e942381fc9717c1581a8"
+        token="3d62a58e9207011abf769dbe25a408fc"
     )
     
     custom_params = {}
@@ -407,7 +407,7 @@ if __name__ == '__main__':
     # 创建客户端
     client = DolphinSchedulerClient(
         base_url="http://127.0.0.1:12345/dolphinscheduler",
-        token="0cad23ded0f0e942381fc9717c1581a8"
+        token="3d62a58e9207011abf769dbe25a408fc"
     )
     
     # 构建自定义参数

@@ -18,7 +18,7 @@ import json
 # DolphinScheduler 配置
 DS_CONFIG = {
     'base_url': 'http://172.20.0.235:12345/dolphinscheduler',
-    'token': '0cad23ded0f0e942381fc9717c1581a8'
+    'token': '3d62a58e9207011abf769dbe25a408fc'
 }
 
 # 三个已知项目

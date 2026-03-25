@@ -15,7 +15,7 @@ from collections import defaultdict
 WORKSPACE = '/home/node/.openclaw/workspace'
 DING_ID = 'cidune9y06rl1j0uelxqielqw=='
 DS_BASE = 'http://172.20.0.235:12345/dolphinscheduler'
-DS_TOKEN = '0cad23ded0f0e942381fc9717c1581a8'
+DS_TOKEN = '3d62a58e9207011abf769dbe25a408fc'
 PROJECT_CODE = '158514956085248'
 
 # 6个复验工作流（全部）
