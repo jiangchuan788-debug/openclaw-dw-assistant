@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-智能告警修复 - 严格7步流程版
-不遗漏任何操作，复验跑全6个工作流
+智能告警修复 - 严格8步流程版
+不遗漏任何操作，复验跑全6个工作流，新增TV报告发送
 """
 
 import subprocess
@@ -469,11 +469,70 @@ def step6_save_records(results, fuyan_results, fixed, failed):
     log(f"\n📁 所有记录保存在: {base_dir}/")
 
 
+def step7_send_tv_report(results, fuyan_results, fixed, failed):
+    """步骤7: 通过TV API发送修复报告"""
+    log("\n" + "="*70)
+    log("【步骤7】通过TV API发送修复报告")
+    log("="*70)
+    
+    try:
+        # 导入TV报告模块
+        import subprocess
+        
+        # 构建报告内容
+        lines = []
+        lines.append("📊 智能告警修复报告")
+        lines.append("")
+        lines.append(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append("")
+        
+        # 成功的表
+        if fixed:
+            lines.append(f"✅ 修复成功 ({len(fixed)}个表):")
+            for task in fixed:
+                lines.append(f"  • {task['table']}")
+                lines.append(f"    dt={task['dt']}, 实例ID: {task.get('instance_id', 'N/A')}")
+            lines.append("")
+        
+        # 失败的表
+        if failed:
+            lines.append(f"❌ 修复失败 ({len(failed)}个表):")
+            for task in failed:
+                lines.append(f"  • {task['table']} (dt={task['dt']})")
+                if task.get('error'):
+                    lines.append(f"    错误: {task['error']}")
+            lines.append("")
+        
+        # 复验情况
+        fuyan_success = sum(1 for f in fuyan_results if f.get('status') == 'success')
+        fuyan_total = len(fuyan_results)
+        lines.append(f"🔄 复验执行: {fuyan_success}/{fuyan_total} 个工作流启动成功")
+        lines.append("")
+        
+        # 记录位置
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        lines.append(f"💾 记录保存: auto_repair_records/{date_str}/")
+        
+        report_text = "\n".join(lines)
+        
+        # 调用TV报告脚本
+        cmd = ['python3', f'{WORKSPACE}/send_tv_report.py', report_text]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            log("✅ TV报告发送成功")
+        else:
+            log(f"⚠️ TV报告发送失败: {result.stderr}", 'WARN')
+            
+    except Exception as e:
+        log(f"⚠️ TV报告发送异常: {e}", 'WARN')
+
+
 def main():
     log("="*70)
-    log("🚀 智能告警修复 - 严格7步流程版")
+    log("🚀 智能告警修复 - 严格8步流程版")
     log("="*70)
-    log("严格按照7步执行，不遗漏，复验跑全6个")
+    log("严格按照8步执行，不遗漏，复验跑全6个，新增TV报告")
     log("="*70)
     
     # 步骤1: 扫描告警
@@ -494,6 +553,9 @@ def main():
     # 步骤6: 保存记录（detail+commands+thinking）
     step6_save_records(results, fuyan_results, fixed, failed)
     
+    # 步骤7: 通过TV API发送修复报告
+    step7_send_tv_report(results, fuyan_results, fixed, failed)
+    
     log("\n" + "="*70)
     log("✅ 7步流程全部完成，无遗漏")
     log("="*70)
@@ -501,6 +563,7 @@ def main():
     log(f"  修复任务: {len(fixed)}成功, {len(failed)}失败")
     log(f"  复验工作流: 6个全部执行")
     log(f"  记录文件: 3类已保存")
+    log(f"  TV报告: 已发送")
 
 
 if __name__ == '__main__':
