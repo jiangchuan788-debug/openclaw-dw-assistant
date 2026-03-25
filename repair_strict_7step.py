@@ -12,11 +12,21 @@ import time
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+# 导入配置（安全读取Token）
+from config import get_ds_token, TV_CONFIG
+
 WORKSPACE = '/home/node/.openclaw/workspace'
 DING_ID = 'cidune9y06rl1j0uelxqielqw=='
 DS_BASE = 'http://172.20.0.235:12345/dolphinscheduler'
-DS_TOKEN = '097ef3039a5d7af826c1cab60dedf96a'
 PROJECT_CODE = '158514956085248'
+
+# DS_TOKEN通过环境变量获取
+try:
+    DS_TOKEN = get_ds_token()
+except ValueError as e:
+    print(f"❌ 错误: {e}")
+    print("请设置环境变量后再执行: export DS_TOKEN='your_token'")
+    exit(1)
 
 # 6个复验工作流（全部）
 FUYAN_WORKFLOWS = [

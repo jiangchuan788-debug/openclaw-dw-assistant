@@ -1,8 +1,8 @@
 # 智能告警修复流程 - 执行文档
 
 ## 📋 文档信息
-- **版本**: v1.0
-- **创建日期**: 2026-03-24
+- **版本**: v2.0
+- **更新日期**: 2026-03-25
 - **执行环境**: OpenClaw + DolphinScheduler
 - **工作目录**: `/home/node/.openclaw/workspace`
 
@@ -16,23 +16,40 @@ cd /home/node/.openclaw/workspace
 pwd  # 确认输出: /home/node/.openclaw/workspace
 ```
 
-### 2. 检查必要脚本是否存在
+### 2. 设置环境变量（重要！）
+**安全提示**: Token不再硬编码在代码中，必须通过环境变量设置
+
+```bash
+# 设置DS Token（联系管理员获取）
+export DS_TOKEN='your_ds_token_here'
+
+# 验证设置成功
+echo $DS_TOKEN
+
+# 如需永久设置，添加到 ~/.bashrc:
+echo "export DS_TOKEN='your_ds_token_here'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+### 3. 检查必要脚本是否存在
 ```bash
 ls -la alert/alert_query_optimized.py
 ls -la dolphinscheduler/search_table.py
 ls -la dolphinscheduler/check_running.py
 ls -la repair_strict_7step.py
+ls -la send_tv_report.py
 ```
 
-### 3. 确认DS服务可访问
+### 4. 确认DS服务可访问
 ```bash
+# 使用环境变量中的token测试
 curl -s "http://172.20.0.235:12345/dolphinscheduler/projects/158514956085248/process-definition?pageNo=1&pageSize=5" \
-  -H "token: 0cad23ded0f0e942381fc9717c1581a8" | head -20
+  -H "token: $DS_TOKEN" | head -20
 ```
 
 ---
 
-## 🚀 正式执行流程
+## 🚀 正式执行流程（8步）
 
 ### 【步骤1】扫描数据库告警
 
@@ -58,11 +75,6 @@ python3 alert_query_optimized.py
 - [ ] 告警已推送到钉钉群
 - [ ] 记录告警ID列表
 - [ ] 确认告警内容为"未恢复"
-
-**记录到日志**:
-```bash
-echo "$(date '+%Y-%m-%d %H:%M:%S') - 步骤1完成 - 发现X条告警" >> ../auto_repair_logs/execute_$(date +%Y%m%d).log
-```
 
 ---
 
@@ -92,6 +104,7 @@ dt提取: 从执行语句中提取日期 'YYYY-MM-DD'
 **操作命令**（以dwb_asset_period_info为例）:
 ```bash
 cd /home/node/.openclaw/workspace/dolphinscheduler
+export DS_TOKEN='your_token'  # 确保已设置
 python3 search_table.py dwb_asset_period_info
 ```
 
@@ -173,6 +186,7 @@ else:
 **检查2: 工作流空闲检查**
 ```bash
 cd /home/node/.openclaw/workspace/dolphinscheduler
+export DS_TOKEN='your_token'
 python3 check_running.py --check-only -f "工作流名称"
 # 返回码: 0=空闲, 1=忙碌
 ```
@@ -185,7 +199,6 @@ python3 check_running.py --check-only -f "工作流名称"
 
 **检查4: 全局并行限制（最多2个）**
 ```python
-# 使用信号量控制
 MAX_PARALLEL = 2
 ```
 
@@ -193,8 +206,10 @@ MAX_PARALLEL = 2
 
 **构建启动命令**（示例）:
 ```bash
+export DS_TOKEN='your_token'
+
 curl -s -X POST 'http://172.20.0.235:12345/dolphinscheduler/projects/158514956085248/executors/start-process-instance' \
-  -H 'token: 0cad23ded0f0e942381fc9717c1581a8' \
+  -H "token: $DS_TOKEN" \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -d 'processDefinitionCode=工作流Code' \
   -d 'startNodeList=任务Code' \
@@ -202,6 +217,8 @@ curl -s -X POST 'http://172.20.0.235:12345/dolphinscheduler/projects/15851495608
   -d 'failureStrategy=CONTINUE' \
   -d 'warningType=NONE' \
   -d 'warningGroupId=0' \
+  -d 'processInstancePriority=MEDIUM' \
+  -d 'workerGroup=default' \
   -d 'environmentCode=154818922491872' \
   -d 'tenantCode=dolphinscheduler' \
   -d 'execType=START_PROCESS' \
@@ -247,10 +264,13 @@ EOF
 
 **启动命令**（示例）:
 ```bash
+export DS_TOKEN='your_token'
+
 curl -s -X POST 'http://172.20.0.235:12345/dolphinscheduler/projects/158515019231232/executors/start-process-instance' \
-  -H 'token: 0cad23ded0f0e942381fc9717c1581a8' \
+  -H "token: $DS_TOKEN" \
   -d 'processDefinitionCode=158515019703296' \
   -d 'failureStrategy=CONTINUE' \
+  -d 'warningType=NONE' \
   -d 'environmentCode=154818922491872' \
   -d 'tenantCode=dolphinscheduler' \
   -d 'execType=START_PROCESS' \
@@ -286,14 +306,11 @@ python3 alert_query_optimized.py
 
 ✅ 以下表通过按照指定dt重跑的方式修复成功:
   • 表名1 (dt=2026-03-22) - 实例ID: xxx
-  • 表名2 (dt=2026-03-23) - 实例ID: xxx
+  • 表名2 (dt=2026-03-22) - 实例ID: xxx
 
 ❌ 以下表修复失败，需要人工处理:
   • 表名3 (dt=2026-03-22) - @陈江川
-    错误: xxx
-  • 表名4 (dt=2026-03-23) - @陈江川
-    错误: xxx
-
+    
 🔄 复验执行: 6/6 个工作流已启动
 ```
 
@@ -318,7 +335,7 @@ mkdir -p /home/node/.openclaw/workspace/auto_repair_records/$(date +%Y-%m-%d)
 1. **详细数据** (`detail_YYYYMMDD_HHMMSS.json`):
 ```json
 {
-  "timestamp": "2026-03-24T19:00:00",
+  "timestamp": "2026-03-24T10:00:00",
   "tasks": [...],
   "fuyan_results": [...],
   "fixed": ["表名1", "表名2"],
@@ -329,7 +346,8 @@ mkdir -p /home/node/.openclaw/workspace/auto_repair_records/$(date +%Y-%m-%d)
 2. **执行命令** (`commands_YYYYMMDD_HHMMSS.sh`):
 ```bash
 #!/bin/bash
-# 所有执行的curl命令
+# 执行的命令记录
+export DS_TOKEN='your_token'
 ...
 ```
 
@@ -344,38 +362,100 @@ mkdir -p /home/node/.openclaw/workspace/auto_repair_records/$(date +%Y-%m-%d)
 
 ---
 
+### 【步骤7】TV API报告发送 🆕
+
+**操作命令**:
+```bash
+cd /home/node/.openclaw/workspace
+
+# 使用脚本发送报告
+python3 send_tv_report.py "报告内容"
+
+# 或在Python中调用
+python3 -c "
+from send_tv_report import send_tv_report
+report = '''📊 智能告警修复报告
+...
+'''
+send_tv_report(report)
+"
+```
+
+**TV API配置**:
+- API地址: `https://tv-service-alert.kuainiu.chat/alert/v2/array`
+- 机器人ID: `fbbcabb4-d187-4d9e-8e1e-ba7654a24d1c`
+- HTTP方法: POST
+- Content-Type: application/json
+
+**请求体格式**:
+```json
+{
+  "botId": "fbbcabb4-d187-4d9e-8e1e-ba7654a24d1c",
+  "message": "报告内容",
+  "mentions": []
+}
+```
+
+**检查点**:
+- [ ] HTTP返回202
+- [ ] 钉钉群中收到TV消息
+
+---
+
+### 【步骤8】完成统计
+
+**输出汇总信息**:
+```
+📊 执行完成统计
+================
+执行时间: 2026-03-25 10:00:00
+修复任务: X成功, Y失败
+复验工作流: 6/6 成功
+记录文件: 3类已保存
+TV报告: 已发送
+================
+```
+
+---
+
 ## 📝 执行记录模板
 
 每次执行后填写：
 
 ```
-执行日期: 2026-03-24
+执行日期: 2026-03-25
 执行人: OpenClaw
+DS_TOKEN: 已设置（环境变量）
 告警数量: X条
 修复成功: X个表
 修复失败: X个表
 复验状态: 6/6 成功
-记录路径: auto_repair_records/2026-03-24/
+TV报告: 已发送
+记录路径: auto_repair_records/2026-03-25/
 ```
 
 ---
 
 ## ⚠️ 常见问题处理
 
-### 问题1: search_table.py找不到表
+### 问题1: DS_TOKEN未设置
+**现象**: 脚本报错 "DS_TOKEN环境变量未设置"
+**解决**: 
+```bash
+export DS_TOKEN='your_token_here'
+```
+
+### 问题2: search_table.py找不到表
 **解决**: 尝试使用表名关键字（如'account_repay'而非完整表名）
 
-### 问题2: check_running.py返回忙碌
+### 问题3: check_running.py返回忙碌
 **解决**: 循环等待，最多等待5分钟
 
-### 问题3: 启动API返回50014错误
+### 问题4: 启动API返回50014错误
 **解决**: 
 1. 检查工作流是否真的空闲
 2. 确认任务Code正确
 3. 使用完整参数（包含environmentCode等）
-
-### 问题4: dt参数未正确传递
-**解决**: 检查startParams JSON格式是否正确转义
 
 ---
 
@@ -387,7 +467,10 @@ mkdir -p /home/node/.openclaw/workspace/auto_repair_records/$(date +%Y-%m-%d)
 | `dolphinscheduler/search_table.py` | 表位置查找 |
 | `dolphinscheduler/check_running.py` | 工作流状态检查 |
 | `dolphinscheduler/run_fuyan_workflows.py` | 复验工作流 |
-| `repair_strict_7step.py` | 完整自动化脚本 |
+| `send_tv_report.py` 🆕 | TV API报告发送 |
+| `repair_strict_7step.py` | 完整8步流程脚本 |
+| `config.py` 🆕 | 安全配置读取 |
+| `config.ini.template` 🆕 | 配置模板 |
 | `dolphinscheduler/workflows_export.csv` | 工作流列表参考 |
 
 ---
@@ -401,6 +484,30 @@ mkdir -p /home/node/.openclaw/workspace/auto_repair_records/$(date +%Y-%m-%d)
 - [ ] 步骤4: 6个复验工作流已启动
 - [ ] 步骤5: 报告已发送到钉钉群
 - [ ] 步骤6: 3类记录文件已保存
+- [ ] **步骤7**: **TV报告已发送** 🆕
+- [ ] 步骤8: 完成统计输出
+
+---
+
+## 🔐 安全提示
+
+1. **Token管理**: DS_TOKEN通过环境变量设置，不在代码中硬编码
+2. **配置文件**: 使用 `config.ini.template` 作为模板，真实配置不提交到Git
+3. **日志检查**: 确保日志文件中不包含明文token
+4. **权限控制**: 限制工作目录的访问权限
+
+---
+
+## 📝 更新日志
+
+### v2.0 (2026-03-25)
+- 新增步骤7: TV API报告发送
+- 安全升级: Token改为环境变量读取，移除所有硬编码
+- 新增配置管理: config.py 和 config.ini.template
+- 更新为完整8步流程
+
+### v1.0 (2026-03-24)
+- 初始版本，7步流程
 
 ---
 

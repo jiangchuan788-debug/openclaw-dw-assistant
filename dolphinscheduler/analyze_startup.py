@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 # DolphinScheduler 配置
 DS_CONFIG = {
     'base_url': 'http://172.20.0.235:12345/dolphinscheduler',
-    'token': '097ef3039a5d7af826c1cab60dedf96a',
+    'token': os.environ.get('DS_TOKEN', ''),
     'project_code': '158514956085248',
     'project_name': '国内数仓-工作流'
 }

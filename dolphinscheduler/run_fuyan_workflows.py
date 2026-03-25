@@ -19,7 +19,7 @@ from datetime import datetime
 # DolphinScheduler 配置
 DS_CONFIG = {
     'base_url': 'http://172.20.0.235:12345/dolphinscheduler',
-    'token': '097ef3039a5d7af826c1cab60dedf96a'
+    'token': os.environ.get('DS_TOKEN', '')
 }
 
 # 复验工作流列表（从CSV中提取）
