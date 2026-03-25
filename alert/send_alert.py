@@ -16,22 +16,32 @@ import io
 import argparse
 import json
 import requests
+import os
 from datetime import datetime
 
 # 确保 UTF-8 输出
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 # ================= 配置区 =================
-OPENCLAW_WEBHOOK = "http://127.0.0.1:18789/hooks/wattrel/wake"
-OPENCLAW_HOOK_TOKEN = "MySecretAlertToken123"
+OPENCLAW_WEBHOOK = os.environ.get('OPENCLAW_WEBHOOK', 'http://127.0.0.1:18789/hooks/wattrel/wake')
+OPENCLAW_HOOK_TOKEN = os.environ.get('OPENCLAW_HOOK_TOKEN', 'MySecretAlertToken123')
 
-# 数据库配置（仅 --from-db 模式使用）
-DB_HOST = '127.0.0.1'
-DB_PORT = 3333
-DB_USER = 'e_ds'
-DB_PASS = 'hAN0Hax1lop'
-DB_NAME = 'wattrel'
+# 数据库配置（仅 --from-db 模式使用，从环境变量读取）
+DB_HOST = os.environ.get('DB_HOST', '172.20.0.235')
+DB_PORT = int(os.environ.get('DB_PORT', '13306'))
+DB_USER = os.environ.get('DB_USER', 'e_ds')
+DB_PASS = os.environ.get('DB_PASSWORD', '')
+DB_NAME = os.environ.get('DB_NAME', 'wattrel')
 # ==========================================
+
+
+def check_db_config():
+    """检查数据库配置"""
+    if not DB_PASS:
+        print("⚠️ 警告: DB_PASSWORD环境变量未设置")
+        print("请执行: export DB_PASSWORD='your_db_password'")
+        return False
+    return True
 
 
 def format_alert_message(task_name, alert_time, level, check_time, content, sql=""):
