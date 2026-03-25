@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
+sys.path.insert(0, "/home/node/.openclaw/workspace")
+import auto_load_env
+
+
+# -*- coding: utf-8 -*-
+import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 """

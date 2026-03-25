@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+
+# 自动加载环境变量
+import sys
+sys.path.insert(0, "/home/node/.openclaw/workspace")
+import auto_load_env
+
 # -*- coding: utf-8 -*-
 """
 检测国内数仓-工作流正在运行的工作流实例

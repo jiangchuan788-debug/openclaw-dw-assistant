@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import sys
+sys.path.insert(0, "/home/node/.openclaw/workspace")
+import auto_load_env
+
+
+# -*- coding: utf-8 -*-
 """
 指标预警校验结果查询脚本 - 查询 wattrel_quality_result 表
 - 只查询 result=1（异常）的数据

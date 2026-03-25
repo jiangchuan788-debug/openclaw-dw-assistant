@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+
+# 自动加载环境变量
+import sys
+sys.path.insert(0, "/home/node/.openclaw/workspace")
+import auto_load_env
+
 # -*- coding: utf-8 -*-
 """
 搜索特定表名在哪些工作流中使用

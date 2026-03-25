@@ -4,6 +4,11 @@
 不遗漏任何操作，复验跑全6个工作流，新增TV报告发送
 """
 
+# 🆕 自动加载环境变量（从~/.bashrc读取）
+import sys
+sys.path.insert(0, '/home/node/.openclaw/workspace')
+import auto_load_env
+
 import subprocess
 import json
 import os
@@ -26,6 +31,7 @@ try:
 except ValueError as e:
     print(f"❌ 错误: {e}")
     print("请设置环境变量后再执行: export DS_TOKEN='your_token'")
+    print("或在 ~/.bashrc 中添加: export DS_TOKEN='your_token'")
     exit(1)
 
 # 6个复验工作流（全部）

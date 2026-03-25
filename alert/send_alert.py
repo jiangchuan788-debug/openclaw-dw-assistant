@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import sys
+sys.path.insert(0, "/home/node/.openclaw/workspace")
+import auto_load_env
+
+
+# -*- coding: utf-8 -*-
 """
 告警格式化发送脚本
 按照标准格式发送告警到钉钉群
