@@ -1,7 +1,7 @@
 # 智能告警修复流程 - 执行文档
 
 ## 📋 文档信息
-- **版本**: v2.0
+- **版本**: v2.2
 - **更新日期**: 2026-03-25
 - **执行环境**: OpenClaw + DolphinScheduler
 - **工作目录**: `/home/node/.openclaw/workspace`
@@ -16,40 +16,56 @@ cd /home/node/.openclaw/workspace
 pwd  # 确认输出: /home/node/.openclaw/workspace
 ```
 
-### 2. 设置环境变量（重要！）
-**安全提示**: Token不再硬编码在代码中，必须通过环境变量设置
+### 2. 设置环境变量（只需一次）
+**🆕 自动加载**: 脚本会自动从 `~/.bashrc` 加载环境变量，无需手动 `source`
+
+首次使用前，将以下配置写入 `~/.bashrc`:
 
 ```bash
-# 设置DS Token（联系管理员获取）
+# 编辑配置文件
+nano ~/.bashrc
+
+# 添加以下内容到文件末尾
+# ========== 智能告警修复系统配置 ==========
+# DolphinScheduler API Token
 export DS_TOKEN='your_ds_token_here'
 
-# 验证设置成功
-echo $DS_TOKEN
-
-# 如需永久设置，添加到 ~/.bashrc:
-echo "export DS_TOKEN='your_ds_token_here'" >> ~/.bashrc
-source ~/.bashrc
+# 数据库连接配置
+export DB_PASSWORD='your_db_password_here'
+export DB_HOST='172.20.0.235'      # 可选，默认
+export DB_PORT='13306'             # 可选，默认
+export DB_USER='e_ds'              # 可选，默认
+export DB_NAME='wattrel'           # 可选，默认
+# ==========================================
 ```
 
-### 3. 检查必要脚本是否存在
-```bash
-ls -la alert/alert_query_optimized.py
-ls -la dolphinscheduler/search_table.py
-ls -la dolphinscheduler/check_running.py
-ls -la repair_strict_7step.py
-ls -la send_tv_report.py
-```
+**保存并退出**: `Ctrl+X` → `Y` → `Enter`
 
-### 4. 确认DS服务可访问
+### 3. 验证环境变量已配置
 ```bash
-# 使用环境变量中的token测试
-curl -s "http://172.20.0.235:12345/dolphinscheduler/projects/158514956085248/process-definition?pageNo=1&pageSize=5" \
-  -H "token: $DS_TOKEN" | head -20
+# 查看 ~/.bashrc 中的配置
+grep -A 10 "智能告警修复系统配置" ~/.bashrc
 ```
 
 ---
 
 ## 🚀 正式执行流程（8步）
+
+### 🆕 执行方式（无需手动设置环境变量）
+
+所有脚本已配置**自动加载环境变量**，直接执行即可：
+
+```bash
+cd /home/node/.openclaw/workspace
+python3 repair_strict_7step.py
+```
+
+脚本会自动：
+1. 检测环境变量是否已设置
+2. 如未设置，自动从 `~/.bashrc` 加载
+3. 显示加载成功的提示
+
+---
 
 ### 【步骤1】扫描数据库告警
 
@@ -57,6 +73,11 @@ curl -s "http://172.20.0.235:12345/dolphinscheduler/projects/158514956085248/pro
 ```bash
 cd /home/node/.openclaw/workspace/alert
 python3 alert_query_optimized.py
+```
+
+**自动加载提示**:
+```
+✅ 已从 /home/node/.bashrc 加载 6 个环境变量
 ```
 
 **预期输出**:
@@ -72,9 +93,9 @@ python3 alert_query_optimized.py
 ```
 
 **检查点**:
+- [ ] 环境变量自动加载成功
 - [ ] 告警已推送到钉钉群
 - [ ] 记录告警ID列表
-- [ ] 确认告警内容为"未恢复"
 
 ---
 
@@ -101,15 +122,16 @@ dt提取: 从执行语句中提取日期 'YYYY-MM-DD'
 
 #### 2.2 对每个表调用search_table.py查找位置
 
-**操作命令**（以dwb_asset_period_info为例）:
+**操作命令**（无需手动设置环境变量）:
 ```bash
 cd /home/node/.openclaw/workspace/dolphinscheduler
-export DS_TOKEN='your_token'  # 确保已设置
 python3 search_table.py dwb_asset_period_info
 ```
 
 **预期输出**:
 ```
+✅ 已从 /home/node/.bashrc 加载 6 个环境变量
+
 ====================================================================================================
 🔍 在 [国内数仓-工作流] 中搜索: 'dwb_asset_period_info'
 ...
@@ -147,9 +169,9 @@ EOF
 ```
 
 **检查点**:
+- [ ] 环境变量自动加载成功
 - [ ] 每个告警表都找到对应的工作流
 - [ ] 工作流状态为ONLINE
-- [ ] 记录文件已保存
 
 ---
 
@@ -183,10 +205,9 @@ else:
     继续执行
 ```
 
-**检查2: 工作流空闲检查**
+**检查2: 工作流空闲检查**（无需手动设置环境变量）
 ```bash
 cd /home/node/.openclaw/workspace/dolphinscheduler
-export DS_TOKEN='your_token'
 python3 check_running.py --check-only -f "工作流名称"
 # 返回码: 0=空闲, 1=忙碌
 ```
@@ -204,34 +225,19 @@ MAX_PARALLEL = 2
 
 #### 3.3 执行重跑
 
-**构建启动命令**（示例）:
+**构建启动命令**（无需手动设置环境变量）:
 ```bash
-export DS_TOKEN='your_token'
+cd /home/node/.openclaw/workspace
+python3 repair_strict_7step.py
 
-curl -s -X POST 'http://172.20.0.235:12345/dolphinscheduler/projects/158514956085248/executors/start-process-instance' \
-  -H "token: $DS_TOKEN" \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'processDefinitionCode=工作流Code' \
-  -d 'startNodeList=任务Code' \
-  -d 'taskDependType=TASK_ONLY' \
-  -d 'failureStrategy=CONTINUE' \
-  -d 'warningType=NONE' \
-  -d 'warningGroupId=0' \
-  -d 'processInstancePriority=MEDIUM' \
-  -d 'workerGroup=default' \
-  -d 'environmentCode=154818922491872' \
-  -d 'tenantCode=dolphinscheduler' \
-  -d 'execType=START_PROCESS' \
-  -d 'dryRun=0' \
-  -d 'scheduleTime=' \
-  -d 'startParams={"dt":"2026-03-22"}' \
-  --connect-timeout 30
+# 或在脚本内部自动执行curl:
+# curl命令使用从~/.bashrc加载的DS_TOKEN
 ```
 
 **检查点**:
+- [ ] 环境变量自动加载成功
 - [ ] 返回code=0，msg=success
 - [ ] 记录instance_id
-- [ ] 等待3秒后继续下一个
 
 ---
 
@@ -262,20 +268,9 @@ EOF
 | 5 | 每周复验全级别数据(M-3) | 158515019741184 |
 | 6 | 每月11日复验全级别数据(Y-2) | 158515019778048 |
 
-**启动命令**（示例）:
+**操作命令**（由脚本自动执行，无需手动设置）:
 ```bash
-export DS_TOKEN='your_token'
-
-curl -s -X POST 'http://172.20.0.235:12345/dolphinscheduler/projects/158515019231232/executors/start-process-instance' \
-  -H "token: $DS_TOKEN" \
-  -d 'processDefinitionCode=158515019703296' \
-  -d 'failureStrategy=CONTINUE' \
-  -d 'warningType=NONE' \
-  -d 'environmentCode=154818922491872' \
-  -d 'tenantCode=dolphinscheduler' \
-  -d 'execType=START_PROCESS' \
-  -d 'dryRun=0' \
-  -d 'scheduleTime='
+# 已在 repair_strict_7step.py 中自动执行
 ```
 
 **等待复验完成**:
@@ -285,7 +280,7 @@ sleep 300  # 等待5分钟
 
 #### 4.3 再次检查数据库告警
 
-**操作命令**:
+**操作命令**（无需手动设置环境变量）:
 ```bash
 cd /home/node/.openclaw/workspace/alert
 python3 alert_query_optimized.py
@@ -314,12 +309,7 @@ python3 alert_query_optimized.py
 🔄 复验执行: 6/6 个工作流已启动
 ```
 
-**发送命令**:
-```bash
-openclaw message send --channel dingtalk-connector \
-  --target "group:cidune9y06rl1j0uelxqielqw==" \
-  --message "报告内容"
-```
+**发送方式**: 脚本自动发送
 
 ---
 
@@ -347,7 +337,6 @@ mkdir -p /home/node/.openclaw/workspace/auto_repair_records/$(date +%Y-%m-%d)
 ```bash
 #!/bin/bash
 # 执行的命令记录
-export DS_TOKEN='your_token'
 ...
 ```
 
@@ -364,10 +353,8 @@ export DS_TOKEN='your_token'
 
 ### 【步骤7】TV API报告发送 🆕
 
-**操作命令**:
+**操作命令**（脚本自动执行）:
 ```bash
-cd /home/node/.openclaw/workspace
-
 # 使用脚本发送报告
 python3 send_tv_report.py "报告内容"
 
@@ -425,7 +412,7 @@ TV报告: 已发送
 ```
 执行日期: 2026-03-25
 执行人: OpenClaw
-DS_TOKEN: 已设置（环境变量）
+环境变量: 自动从~/.bashrc加载
 告警数量: X条
 修复成功: X个表
 修复失败: X个表
@@ -438,24 +425,32 @@ TV报告: 已发送
 
 ## ⚠️ 常见问题处理
 
-### 问题1: DS_TOKEN未设置
-**现象**: 脚本报错 "DS_TOKEN环境变量未设置"
+### 问题1: 环境变量未自动加载
+**现象**: 脚本提示"已从~/.bashrc加载0个环境变量"
 **解决**: 
 ```bash
-export DS_TOKEN='your_token_here'
+# 检查~/.bashrc中是否有配置
+grep "DS_TOKEN" ~/.bashrc
+
+# 如果没有，重新添加
+echo "export DS_TOKEN='your_token'" >> ~/.bashrc
 ```
 
-### 问题2: search_table.py找不到表
+### 问题2: 脚本无法读取环境变量
+**现象**: "DS_TOKEN环境变量未设置"
+**解决**:
+```bash
+# 检查~/.bashrc格式是否正确
+cat ~/.bashrc | grep -A 5 "智能告警修复系统配置"
+
+# 确保格式为: export VAR_NAME='value'
+```
+
+### 问题3: search_table.py找不到表
 **解决**: 尝试使用表名关键字（如'account_repay'而非完整表名）
 
-### 问题3: check_running.py返回忙碌
+### 问题4: check_running.py返回忙碌
 **解决**: 循环等待，最多等待5分钟
-
-### 问题4: 启动API返回50014错误
-**解决**: 
-1. 检查工作流是否真的空闲
-2. 确认任务Code正确
-3. 使用完整参数（包含environmentCode等）
 
 ---
 
@@ -463,14 +458,15 @@ export DS_TOKEN='your_token_here'
 
 | 文件 | 用途 |
 |------|------|
-| `alert/alert_query_optimized.py` | 告警扫描 |
-| `dolphinscheduler/search_table.py` | 表位置查找 |
-| `dolphinscheduler/check_running.py` | 工作流状态检查 |
-| `dolphinscheduler/run_fuyan_workflows.py` | 复验工作流 |
-| `send_tv_report.py` 🆕 | TV API报告发送 |
-| `repair_strict_7step.py` | 完整8步流程脚本 |
-| `config.py` 🆕 | 安全配置读取 |
-| `config.ini.template` 🆕 | 配置模板 |
+| `auto_load_env.py` 🆕 | 自动加载环境变量模块 |
+| `config.py` | 安全配置读取模块 |
+| `alert/alert_query_optimized.py` | 告警扫描（自动加载）|
+| `dolphinscheduler/search_table.py` | 表位置查找（自动加载）|
+| `dolphinscheduler/check_running.py` | 工作流状态检查（自动加载）|
+| `dolphinscheduler/run_fuyan_workflows.py` | 复验工作流（自动加载）|
+| `send_tv_report.py` | TV API报告发送 |
+| `repair_strict_7step.py` | 完整8步流程脚本（自动加载）|
+| `EXECUTION_GUIDE.md` | 本文档 |
 | `dolphinscheduler/workflows_export.csv` | 工作流列表参考 |
 
 ---
@@ -491,19 +487,34 @@ export DS_TOKEN='your_token_here'
 
 ## 🔐 安全提示
 
-1. **Token管理**: DS_TOKEN通过环境变量设置，不在代码中硬编码
-2. **配置文件**: 使用 `config.ini.template` 作为模板，真实配置不提交到Git
-3. **日志检查**: 确保日志文件中不包含明文token
-4. **权限控制**: 限制工作目录的访问权限
+1. **环境变量管理**: 
+   - DS_TOKEN和DB_PASSWORD通过`~/.bashrc`设置
+   - 脚本自动加载，代码中无硬编码
+   - 建议设置文件权限: `chmod 600 ~/.bashrc`
+
+2. **自动加载机制**:
+   - 脚本启动时自动检测环境变量
+   - 如未设置，自动从`~/.bashrc`读取
+   - 已设置则跳过，避免重复加载
+
+3. **日志检查**: 确保日志文件中不包含明文密码
 
 ---
 
 ## 📝 更新日志
 
+### v2.2 (2026-03-25)
+- 🆕 **新增**: 环境变量自动加载功能
+- 新增 `auto_load_env.py` 模块
+- 所有脚本自动从 `~/.bashrc` 加载环境变量
+- 无需手动 `source ~/.bashrc`
+
+### v2.1 (2026-03-25)
+- 安全升级: 移除所有明文密码
+- Token和密码改为环境变量读取
+
 ### v2.0 (2026-03-25)
 - 新增步骤7: TV API报告发送
-- 安全升级: Token改为环境变量读取，移除所有硬编码
-- 新增配置管理: config.py 和 config.ini.template
 - 更新为完整8步流程
 
 ### v1.0 (2026-03-24)
