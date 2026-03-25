@@ -274,6 +274,48 @@ def step4_record_and_fuyan(results):
     return fuyan_results
 
 
+def send_dingtalk_report(report_text):
+    """发送报告到钉钉群（分段发送避免长度限制）"""
+    # 钉钉消息有长度限制，分段发送
+    max_length = 3000
+    
+    if len(report_text) <= max_length:
+        try:
+            subprocess.run([
+                'openclaw', 'message', 'send', '--channel', 'dingtalk-connector',
+                '--target', f'group:{DING_ID}', '--message', report_text
+            ], capture_output=True, timeout=15)
+        except Exception as e:
+            print(f"钉钉发送失败: {e}")
+    else:
+        # 分段发送
+        lines = report_text.split('\n')
+        current_msg = ""
+        for line in lines:
+            if len(current_msg) + len(line) + 1 > max_length:
+                # 发送当前段
+                try:
+                    subprocess.run([
+                        'openclaw', 'message', 'send', '--channel', 'dingtalk-connector',
+                        '--target', f'group:{DING_ID}', '--message', current_msg
+                    ], capture_output=True, timeout=15)
+                except:
+                    pass
+                time.sleep(1)
+                current_msg = line + '\n'
+            else:
+                current_msg += line + '\n'
+        # 发送最后一段
+        if current_msg:
+            try:
+                subprocess.run([
+                    'openclaw', 'message', 'send', '--channel', 'dingtalk-connector',
+                    '--target', f'group:{DING_ID}', '--message', current_msg
+                ], capture_output=True, timeout=15)
+            except:
+                pass
+
+
 def step5_send_report(results, fuyan_results):
     """步骤5: 修复成功的整理在群里回复哪些表通过按照dt=?重跑的方式成功了，失败的重点标记出来@陈江川修复"""
     log("\n" + "="*70)
@@ -283,11 +325,16 @@ def step5_send_report(results, fuyan_results):
     fixed = [r for r in results if r.get('status') == 'success']
     failed = [r for r in results if r.get('status') != 'success']
     
+    # 构建报告
     report_lines = ["📊 智能告警修复报告", ""]
+    
+    # 执行时间
+    report_lines.append(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    report_lines.append("")
     
     # 成功的表
     if fixed:
-        report_lines.append("✅ 以下表通过按照指定dt重跑的方式修复成功:")
+        report_lines.append(f"✅ 修复成功 ({len(fixed)}个表):")
         for task in fixed:
             report_lines.append(f"  • {task['table']}")
             report_lines.append(f"    dt={task['dt']}, 实例ID: {task.get('instance_id', 'N/A')}")
@@ -295,19 +342,29 @@ def step5_send_report(results, fuyan_results):
     
     # 失败的表
     if failed:
-        report_lines.append("❌ 以下表修复失败，需要人工处理:")
+        report_lines.append(f"❌ 修复失败 ({len(failed)}个表):")
         for task in failed:
             report_lines.append(f"  • {task['table']} (dt={task['dt']}) - @陈江川")
             if task.get('error'):
-                report_lines.append(f"    错误信息: {task['error']}")
+                report_lines.append(f"    错误: {task['error']}")
         report_lines.append("")
     
     # 复验情况
     fuyan_success = sum(1 for f in fuyan_results if f['status'] == 'success')
     report_lines.append(f"🔄 复验执行: {fuyan_success}/6 个工作流启动成功")
+    report_lines.append("")
+    
+    # 记录位置
+    report_lines.append(f"💾 记录保存: auto_repair_records/{datetime.now().strftime('%Y-%m-%d')}/")
     
     report_text = "\n".join(report_lines)
-    log(report_text)
+    
+    # 控制台输出
+    print(report_text)
+    
+    # 发送到钉钉群
+    send_dingtalk_report(report_text)
+    log("✅ 报告已发送到钉钉群")
     
     return fixed, failed
 
