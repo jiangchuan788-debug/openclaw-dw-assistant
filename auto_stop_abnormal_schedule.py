@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-异常调度实例自动检测与停止脚本
-定时执行，自动检测并停止异常实例，发送报告到钉钉和TV
+异常调度实例自动检测与停止脚本（CSV版本）
+使用本地CSV文件中的调度配置进行检测，避免API分页问题
 
 异常定义:
 1. 无定时配置但被调度启动
@@ -21,6 +21,7 @@ import urllib.request
 import urllib.error
 import json
 import subprocess
+import csv
 from datetime import datetime
 
 # DolphinScheduler 配置
@@ -37,6 +38,9 @@ TV_BOT_ID = 'fbbcabb4-d187-4d9e-8e1e-ba7654a24d1c'
 
 # 钉钉配置
 DINGTALK_CONV_ID = 'cidune9y06rl1j0uelxqielqw=='
+
+# CSV文件路径
+SCHEDULES_CSV = '/home/node/.openclaw/workspace/dolphinscheduler/schedules_export.csv'
 
 
 def send_dingtalk(msg):
@@ -73,6 +77,32 @@ def send_tv_report(message):
             return response.getcode() == 202
     except:
         return False
+
+
+def load_schedules_from_csv():
+    """从CSV文件加载调度配置"""
+    schedules = {}
+    
+    if not os.path.exists(SCHEDULES_CSV):
+        print(f"⚠️ 警告: CSV文件不存在 {SCHEDULES_CSV}")
+        return schedules
+    
+    try:
+        with open(SCHEDULES_CSV, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                code = row.get('工作流Code', '')
+                if code:
+                    schedules[code] = {
+                        'name': row.get('工作流名称', ''),
+                        'cron': row.get('Cron表达式', ''),
+                        'status': row.get('状态', 'OFFLINE')
+                    }
+        print(f"✅ 从CSV加载了 {len(schedules)} 个调度配置")
+    except Exception as e:
+        print(f"❌ 读取CSV失败: {e}")
+    
+    return schedules
 
 
 def fetch_running_instances():
@@ -112,54 +142,19 @@ def get_instance_detail(instance_id):
     return {}
 
 
-def check_workflow_schedule(process_code):
-    """检查工作流是否有定时调度配置"""
-    # 查询所有分页的调度配置
-    all_schedules = []
-    page_no = 1
-    page_size = 50
+def check_workflow_schedule(process_code, schedules_dict):
+    """检查工作流是否有定时调度配置（从CSV）"""
+    code_str = str(process_code)
     
-    while True:
-        url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/schedules?pageNo={page_no}&pageSize={page_size}"
-        
-        req = urllib.request.Request(url)
-        req.add_header('token', DS_CONFIG['token'])
-        
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                if result.get('code') == 0:
-                    schedules = result.get('data', {}).get('totalList', [])
-                    all_schedules.extend(schedules)
-                    
-                    # 检查是否还有更多页
-                    total = result.get('data', {}).get('total', 0)
-                    if page_no * page_size >= total or len(schedules) < page_size:
-                        break
-                    page_no += 1
-                else:
-                    break
-        except Exception as e:
-            print(f"  ⚠️ 查询调度配置失败: {e}")
-            break
+    if code_str in schedules_dict:
+        sch = schedules_dict[code_str]
+        return {
+            'has_schedule': True,
+            'schedule_status': sch.get('status', 'OFFLINE'),
+            'cron': sch.get('cron', 'N/A'),
+            'schedule_name': sch.get('name', 'N/A')
+        }
     
-    # 在所有调度中查找匹配的
-    print(f"    查询到 {len(all_schedules)} 个调度配置")
-    
-    for sch in all_schedules:
-        sch_code = sch.get('processDefinitionCode')
-        sch_name = sch.get('processDefinitionName', 'N/A')
-        # 调试：显示匹配的调度
-        if str(sch_code) == str(process_code):
-            print(f"    ✅ 找到匹配调度: {sch_name} (Code: {sch_code})")
-            return {
-                'has_schedule': True,
-                'schedule_status': sch.get('releaseState', 'UNKNOWN'),
-                'cron': sch.get('crontab', 'N/A'),
-                'schedule_name': sch_name
-            }
-    
-    print(f"    ⚠️ 未找到匹配的调度配置 (查找Code: {process_code})")
     return {
         'has_schedule': False,
         'schedule_status': 'NONE',
@@ -197,10 +192,18 @@ def stop_instance(instance_id):
 def main():
     """主函数"""
     print("="*80)
-    print("🔍 异常调度实例自动检测与停止")
+    print("🔍 异常调度实例自动检测与停止（CSV版本）")
     print("="*80)
     print(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"📁 调度配置CSV: {SCHEDULES_CSV}")
     print("")
+    
+    # 从CSV加载调度配置
+    schedules_dict = load_schedules_from_csv()
+    
+    if not schedules_dict:
+        print("❌ 无法加载调度配置，请检查CSV文件是否存在")
+        return
     
     # 获取运行中的实例
     success, instances = fetch_running_instances()
@@ -217,7 +220,7 @@ def main():
 ✅ 状态: 无运行中实例
 💡 未发现异常调度任务"""
         send_dingtalk(report)
-        # TV：不发送空报告
+        # TV：不发送（无异常）
         print("ℹ️ TV报告未发送（无异常）")
         return
     
@@ -243,7 +246,8 @@ def main():
         
         # 只有 SCHEDULER 类型的才需要检查
         if command_type == 'SCHEDULER':
-            schedule_info = check_workflow_schedule(process_code)
+            # 从CSV检查调度配置
+            schedule_info = check_workflow_schedule(process_code, schedules_dict)
             
             has_schedule = schedule_info['has_schedule']
             schedule_status = schedule_info['schedule_status']
@@ -297,7 +301,7 @@ def main():
         
         print()
     
-    # 生成报告
+    # 生成钉钉报告（始终发送）
     report_lines = ["📊 异常调度检测与停止报告", ""]
     report_lines.append(f"⏰ 检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report_lines.append("")
@@ -317,23 +321,18 @@ def main():
         report_lines.append("")
         report_lines.append("✅ 未发现异常调度任务")
     
-    report = "\n".join(report_lines)
+    ding_report = "\n".join(report_lines)
     
-    # 发送报告
+    # 发送钉钉报告
     print("="*80)
     print("📤 发送报告...")
-    
-    # 钉钉：始终发送完整报告
-    send_dingtalk(report)
+    send_dingtalk(ding_report)
     print("✅ 钉钉报告已发送")
     
-    # TV：只在有异常需要通知时发送（成功停止或停止失败）
+    # TV：只在有异常需要通知时发送
     if abnormal_instances:
-        # 生成TV专用报告（更简洁）
         tv_lines = ["📊 异常调度检测与停止报告", ""]
         tv_lines.append(f"⏰ 检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        tv_lines.append("")
-        tv_lines.append(f"⚠️ 发现 {len(abnormal_instances)} 个异常实例")
         tv_lines.append("")
         
         for inst in abnormal_instances:
