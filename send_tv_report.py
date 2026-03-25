@@ -14,7 +14,7 @@ from datetime import datetime
 
 # TV API配置
 TV_API_URL = 'https://tv-service-alert.kuainiu.chat/alert/v2/array'
-TV_BOT_ID = '8e44f61f-96a8-4dfc-b22e-332a14996c76'
+TV_BOT_ID = 'fbbcabb4-d187-4d9e-8e1e-ba7654a24d1c'
 
 
 def send_tv_report(message, mentions=None):
