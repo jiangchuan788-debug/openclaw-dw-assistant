@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
+import os
 import pymysql
 
+# 从环境变量读取配置
+DB_HOST = os.environ.get('DB_HOST', '172.20.0.235')
+DB_PORT = int(os.environ.get('DB_PORT', '13306'))
+DB_USER = os.environ.get('DB_USER', 'e_ds')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
+DB_NAME = os.environ.get('DB_NAME', 'wattrel')
+
+if not DB_PASSWORD:
+    print("错误: DB_PASSWORD环境变量未设置")
+    print("请执行: export DB_PASSWORD='your_db_password'")
+    exit(1)
+
 conn = pymysql.connect(
-    host='127.0.0.1', 
-    port=3333, 
-    user='e_ds', 
-    password='hAN0Hax1lop', 
-    database='wattrel',
+    host=DB_HOST, 
+    port=DB_PORT, 
+    user=DB_USER, 
+    password=DB_PASSWORD, 
+    database=DB_NAME,
     charset='utf8mb4'
 )
 cursor = conn.cursor(pymysql.cursors.DictCursor)

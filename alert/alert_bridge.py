@@ -15,19 +15,34 @@ import pymysql
 import requests
 import time
 import json
+import os
 
 # ================= 1. 配置区 =================
-# 数据库配置 (告警系统内网映射地址)
-DB_HOST = '172.20.0.235'
-DB_PORT = 13306
-DB_USER = 'e_ds'              # 数据库账号
-DB_PASS = 'hAN0Hax1lop'       # 数据库密码
-DB_NAME = 'wattrel'           # 数据库名
+# 数据库配置 (从环境变量读取)
+DB_HOST = os.environ.get('DB_HOST', '172.20.0.235')
+DB_PORT = int(os.environ.get('DB_PORT', '13306'))
+DB_USER = os.environ.get('DB_USER', 'e_ds')
+DB_PASS = os.environ.get('DB_PASSWORD', '')
+DB_NAME = os.environ.get('DB_NAME', 'wattrel')
 
 # OpenClaw 本地 Webhook 地址（使用 /hooks/wattrel/wake 端点）
-OPENCLAW_WEBHOOK = "http://127.0.0.1:18789/hooks/wattrel/wake"
-OPENCLAW_HOOK_TOKEN = "MySecretAlertToken123"  # Hook 认证 Token
+OPENCLAW_WEBHOOK = os.environ.get('OPENCLAW_WEBHOOK', 'http://127.0.0.1:18789/hooks/wattrel/wake')
+OPENCLAW_HOOK_TOKEN = os.environ.get('OPENCLAW_HOOK_TOKEN', 'MySecretAlertToken123')
 # ==========================================
+
+
+def check_config():
+    """检查配置是否完整"""
+    if not DB_PASS:
+        raise ValueError(
+            "DB_PASSWORD环境变量未设置！\n"
+            "请执行: export DB_PASSWORD='your_db_password'\n"
+            "或在 ~/.bashrc 中添加: export DB_PASSWORD='your_db_password'"
+        )
+
+
+# 启动时检查配置
+check_config()
 
 
 def fetch_and_forward_alerts():

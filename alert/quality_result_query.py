@@ -12,20 +12,36 @@
 
 import json
 import subprocess
+import os
 from datetime import datetime, timedelta
 
 # ================= 配置区 =================
+# 从环境变量读取数据库配置
 DB_CONFIG = {
-    'host': '172.20.0.235',
-    'port': 13306,
-    'user': 'e_ds',
-    'password': 'hAN0Hax1lop',
-    'database': 'wattrel'
+    'host': os.environ.get('DB_HOST', '172.20.0.235'),
+    'port': int(os.environ.get('DB_PORT', '13306')),
+    'user': os.environ.get('DB_USER', 'e_ds'),
+    'password': os.environ.get('DB_PASSWORD', ''),
+    'database': os.environ.get('DB_NAME', 'wattrel')
 }
 
 # 钉钉群配置
 DINGTALK_CONVERSATION_ID = 'cidune9y06rl1j0uelxqielqw=='
 # ==========================================
+
+
+def check_config():
+    """检查配置是否完整"""
+    if not DB_CONFIG['password']:
+        raise ValueError(
+            "DB_PASSWORD环境变量未设置！\n"
+            "请执行: export DB_PASSWORD='your_db_password'\n"
+            "或在 ~/.bashrc 中添加: export DB_PASSWORD='your_db_password'"
+        )
+
+
+# 启动时检查配置
+check_config()
 
 
 def get_date_range():

@@ -13,20 +13,36 @@
 import json
 import urllib.request
 import subprocess
+import os
 from datetime import datetime, timedelta
 
 # ================= 配置区 =================
+# 从环境变量读取数据库配置
 DB_CONFIG = {
-    'host': '172.20.0.235',
-    'port': 13306,
-    'user': 'e_ds',
-    'password': 'hAN0Hax1lop',
-    'database': 'wattrel'
+    'host': os.environ.get('DB_HOST', '172.20.0.235'),
+    'port': int(os.environ.get('DB_PORT', '13306')),
+    'user': os.environ.get('DB_USER', 'e_ds'),
+    'password': os.environ.get('DB_PASSWORD', ''),
+    'database': os.environ.get('DB_NAME', 'wattrel')
 }
 
-OPENCLAW_WEBHOOK = "http://127.0.0.1:18789/hooks/wattrel/wake"
-OPENCLAW_HOOK_TOKEN = "wattrel-webhook-secret-token-2026"
+OPENCLAW_WEBHOOK = os.environ.get('OPENCLAW_WEBHOOK', 'http://127.0.0.1:18789/hooks/wattrel/wake')
+OPENCLAW_HOOK_TOKEN = os.environ.get('OPENCLAW_HOOK_TOKEN', 'wattrel-webhook-secret-token-2026')
 # ==========================================
+
+
+def check_config():
+    """检查配置是否完整"""
+    if not DB_CONFIG['password']:
+        raise ValueError(
+            "DB_PASSWORD环境变量未设置！\n"
+            "请执行: export DB_PASSWORD='your_db_password'\n"
+            "或在 ~/.bashrc 中添加: export DB_PASSWORD='your_db_password'"
+        )
+
+
+# 启动时检查配置
+check_config()
 
 
 def get_yesterday_today():
