@@ -210,14 +210,15 @@ def main():
     
     if not instances:
         print("✅ 当前没有运行中的工作流实例")
-        # 发送空报告
+        # 钉钉：发送空报告
         report = f"""📊 异常调度检测报告
 
 ⏰ 检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 ✅ 状态: 无运行中实例
 💡 未发现异常调度任务"""
         send_dingtalk(report)
-        send_tv_report(report)
+        # TV：不发送空报告
+        print("ℹ️ TV报告未发送（无异常）")
         return
     
     print(f"📋 发现 {len(instances)} 个运行中的实例\n")
@@ -321,9 +322,33 @@ def main():
     # 发送报告
     print("="*80)
     print("📤 发送报告...")
+    
+    # 钉钉：始终发送完整报告
     send_dingtalk(report)
-    send_tv_report(report)
-    print("✅ 报告已发送")
+    print("✅ 钉钉报告已发送")
+    
+    # TV：只在有异常需要通知时发送（成功停止或停止失败）
+    if abnormal_instances:
+        # 生成TV专用报告（更简洁）
+        tv_lines = ["📊 异常调度检测与停止报告", ""]
+        tv_lines.append(f"⏰ 检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        tv_lines.append("")
+        tv_lines.append(f"⚠️ 发现 {len(abnormal_instances)} 个异常实例")
+        tv_lines.append("")
+        
+        for inst in abnormal_instances:
+            if inst['stopped']:
+                tv_lines.append(f"✅ 已停止: {inst['name']}")
+            else:
+                tv_lines.append(f"❌ 停止失败: {inst['name']} (需人工处理)")
+            tv_lines.append(f"   原因: {inst['reason']}")
+        
+        tv_report = "\n".join(tv_lines)
+        send_tv_report(tv_report)
+        print("✅ TV报告已发送（有异常需通知）")
+    else:
+        print("ℹ️ TV报告未发送（无异常）")
+    
     print("="*80)
 
 
