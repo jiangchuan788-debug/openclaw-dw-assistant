@@ -114,28 +114,52 @@ def get_instance_detail(instance_id):
 
 def check_workflow_schedule(process_code):
     """检查工作流是否有定时调度配置"""
-    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/schedules"
+    # 查询所有分页的调度配置
+    all_schedules = []
+    page_no = 1
+    page_size = 50
     
-    req = urllib.request.Request(url)
-    req.add_header('token', DS_CONFIG['token'])
+    while True:
+        url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/schedules?pageNo={page_no}&pageSize={page_size}"
+        
+        req = urllib.request.Request(url)
+        req.add_header('token', DS_CONFIG['token'])
+        
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                if result.get('code') == 0:
+                    schedules = result.get('data', {}).get('totalList', [])
+                    all_schedules.extend(schedules)
+                    
+                    # 检查是否还有更多页
+                    total = result.get('data', {}).get('total', 0)
+                    if page_no * page_size >= total or len(schedules) < page_size:
+                        break
+                    page_no += 1
+                else:
+                    break
+        except Exception as e:
+            print(f"  ⚠️ 查询调度配置失败: {e}")
+            break
     
-    try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            if result.get('code') == 0:
-                schedules = result.get('data', {}).get('totalList', [])
-                
-                for sch in schedules:
-                    if str(sch.get('processDefinitionCode')) == str(process_code):
-                        return {
-                            'has_schedule': True,
-                            'schedule_status': sch.get('releaseState', 'UNKNOWN'),
-                            'cron': sch.get('crontab', 'N/A'),
-                            'schedule_name': sch.get('processDefinitionName', 'N/A')
-                        }
-    except Exception as e:
-        print(f"  ⚠️ 查询调度配置失败: {e}")
+    # 在所有调度中查找匹配的
+    print(f"    查询到 {len(all_schedules)} 个调度配置")
     
+    for sch in all_schedules:
+        sch_code = sch.get('processDefinitionCode')
+        sch_name = sch.get('processDefinitionName', 'N/A')
+        # 调试：显示匹配的调度
+        if str(sch_code) == str(process_code):
+            print(f"    ✅ 找到匹配调度: {sch_name} (Code: {sch_code})")
+            return {
+                'has_schedule': True,
+                'schedule_status': sch.get('releaseState', 'UNKNOWN'),
+                'cron': sch.get('crontab', 'N/A'),
+                'schedule_name': sch_name
+            }
+    
+    print(f"    ⚠️ 未找到匹配的调度配置 (查找Code: {process_code})")
     return {
         'has_schedule': False,
         'schedule_status': 'NONE',
