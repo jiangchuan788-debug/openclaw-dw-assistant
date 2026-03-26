@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-异常调度实例自动检测与停止脚本（全覆盖版本）
-规则：所有运行中实例，只要在CSV中不存在且是调度启动，就停止
+异常调度实例自动检测与停止脚本（最终版）
+核心原则：每次执行独立，只处理当前运行中实例，不跨周期记录
+
+特点：
+1. 每次执行都是全新的，处理所有当前运行中实例
+2. 单次执行内防止重复处理（同一实例只处理一次）
+3. 无24小时限制，实例再次异常会再次处理
+4. 执行边界清晰，无重试和修复逻辑
 
 作者: OpenClaw
 日期: 2026-03-26
@@ -76,7 +82,7 @@ def send_tv_report(message):
 
 
 def load_schedules_from_csv():
-    """从CSV文件加载所有调度配置（只保存Code）"""
+    """从CSV文件加载所有调度配置"""
     schedule_codes = set()
     
     if not os.path.exists(SCHEDULES_CSV):
@@ -91,7 +97,6 @@ def load_schedules_from_csv():
                 if code:
                     schedule_codes.add(code)
         print(f"✅ 从CSV加载了 {len(schedule_codes)} 个调度配置")
-        print(f"📋 调度Code列表: {sorted(schedule_codes)[:5]}... (显示前5个)")
     except Exception as e:
         print(f"❌ 读取CSV失败: {e}")
     
@@ -151,10 +156,7 @@ def get_instance_detail(instance_id):
 
 
 def stop_instance(instance_id):
-    """
-    停止工作流实例
-    API: POST /projects/{code}/executors/execute
-    """
+    """停止工作流实例"""
     url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/executors/execute"
     
     data = {
@@ -183,16 +185,18 @@ def stop_instance(instance_id):
 
 
 def main():
-    """主函数 - 全覆盖检测与停止"""
+    """
+    主函数 - 每次执行独立，处理所有当前运行中实例
+    核心原则：无跨周期记录，单次执行内防止重复
+    """
     print("="*80)
-    print("🔍 异常调度实例全覆盖检测与停止")
+    print("🔍 异常调度实例全覆盖检测与停止（最终版）")
     print("="*80)
     print(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"📁 调度配置CSV: {SCHEDULES_CSV}")
-    print(f"📝 规则: CSV中不存在 + SCHEDULER启动 → 停止")
+    print(f"📝 执行原则: 每次独立，只处理当前实例，无历史记录")
     print("")
     
-    # 从CSV加载所有调度配置Code
+    # 从CSV加载所有调度配置
     schedule_codes = load_schedules_from_csv()
     
     if not schedule_codes:
@@ -213,6 +217,9 @@ def main():
     
     print(f"📋 发现 {len(instances)} 个运行中的实例\n")
     
+    # 单次执行内防止重复处理（用set记录已处理的实例ID）
+    processed_ids = set()
+    
     # 分类统计
     normal_instances = []      # 正常：在CSV中
     abnormal_stopped = []      # 异常已停止
@@ -222,6 +229,13 @@ def main():
     for i, inst in enumerate(instances, 1):
         instance_id = inst.get('id')
         name = inst.get('name', 'N/A')
+        
+        # 单次执行内防止重复处理
+        if instance_id in processed_ids:
+            print(f"[{i}/{len(instances)}] ⏭️ 跳过重复实例: {instance_id}")
+            continue
+        processed_ids.add(instance_id)
+        
         process_code = str(inst.get('processDefinitionCode', ''))
         
         print(f"[{i}/{len(instances)}] 检查: {name[:50]}")
@@ -277,14 +291,14 @@ def main():
         
         print()
     
-    # 生成钉钉报告（始终发送）
+    # 生成钉钉报告
     report_lines = ["📊 异常调度全覆盖检测报告", ""]
     report_lines.append(f"⏰ 检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report_lines.append(f"")
     report_lines.append(f"📋 总实例数: {len(instances)}")
     report_lines.append(f"✅ 正常实例: {len(normal_instances)}")
     report_lines.append(f"⏭️ 忽略实例: {len(ignored_instances)} (非调度启动)")
-    report_lines.append(f"⚠️ 异常已停止: {len(abnormal_stopped)}")
+    report_lines.append(f"🛑 异常已停止: {len(abnormal_stopped)}")
     report_lines.append(f"❌ 异常停止失败: {len(abnormal_failed)}")
     
     if abnormal_stopped:
@@ -309,7 +323,7 @@ def main():
     send_dingtalk(ding_report)
     print("✅ 钉钉报告已发送")
     
-    # TV：有异常时发送（成功停止或停止失败）
+    # TV：有异常时发送
     if abnormal_stopped or abnormal_failed:
         tv_lines = ["📊 异常调度检测与停止报告", ""]
         tv_lines.append(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
@@ -331,6 +345,14 @@ def main():
     else:
         print("ℹ️ TV报告未发送（无异常）")
     
+    print("="*80)
+    print(f"\n📊 本次执行统计:")
+    print(f"  总扫描: {len(instances)} 个实例")
+    print(f"  实际处理: {len(processed_ids)} 个（去重后）")
+    print(f"  正常: {len(normal_instances)}")
+    print(f"  忽略: {len(ignored_instances)}")
+    print(f"  已停止: {len(abnormal_stopped)}")
+    print(f"  停止失败: {len(abnormal_failed)}")
     print("="*80)
 
 
