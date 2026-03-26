@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 智能告警修复 - 严格8步流程版
-不遗漏任何操作，复验跑全6个工作流，新增TV报告发送
+不遗漏任何操作，复验智能选择（默认3个/智能判断/全部6个），新增TV报告发送
 """
 
 # 🆕 自动加载环境变量（从~/.bashrc读取）
@@ -34,15 +34,86 @@ except ValueError as e:
     print("或在 ~/.bashrc 中添加: export DS_TOKEN='your_token'")
     exit(1)
 
-# 6个复验工作流（全部）
-FUYAN_WORKFLOWS = [
-    {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296'},
-    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728'},
-    {'name': '每小时复验2级表数据(D-1)', 'code': '158515019630592'},
-    {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456'},
-    {'name': '每周复验全级别数据(M-3)', 'code': '158515019741184'},
-    {'name': '每月11日复验全级别数据(Y-2)', 'code': '158515019778048'}
+# 默认复验工作流（3个）
+FUYAN_WORKFLOWS_DEFAULT = [
+    {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296', 'level': 'all', 'schedule': 'daily'},
+    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728', 'level': '1', 'schedule': 'hourly'},
+    {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456', 'level': '3', 'schedule': '2hour'}
 ]
+
+# 完整复验工作流列表（6个，备用）
+FUYAN_WORKFLOWS_ALL = [
+    {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296', 'level': 'all', 'schedule': 'daily'},
+    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728', 'level': '1', 'schedule': 'hourly'},
+    {'name': '每小时复验2级表数据(D-1)', 'code': '158515019630592', 'level': '2', 'schedule': 'hourly'},
+    {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456', 'level': '3', 'schedule': '2hour'},
+    {'name': '每周复验全级别数据(M-3)', 'code': '158515019741184', 'level': 'all', 'schedule': 'weekly'},
+    {'name': '每月11日复验全级别数据(Y-2)', 'code': '158515019778048', 'level': 'all', 'schedule': 'monthly'}
+]
+
+# 向后兼容
+def get_fuyan_workflows(mode='default', alerts=None):
+    """
+    获取需要执行的复验工作流列表
+    
+    Args:
+        mode: 'default'(默认3个), 'all'(全部6个), 'smart'(智能判断)
+        alerts: 告警列表，用于智能判断
+    
+    Returns:
+        复验工作流列表
+    """
+    if mode == 'all':
+        return FUYAN_WORKFLOWS_ALL
+    
+    if mode == 'smart' and alerts:
+        return select_fuyan_by_alerts(alerts)
+    
+    # 默认返回3个
+    return FUYAN_WORKFLOWS_DEFAULT
+
+
+def select_fuyan_by_alerts(alerts):
+    """
+    根据告警信息智能选择需要执行的复验工作流
+    
+    规则:
+    - 有1级表告警 → 跑 1级表复验 + 每日全级别
+    - 有2级表告警 → 跑 2级表复验 + 每日全级别
+    - 有3级表告警 → 跑 3级表复验 + 每日全级别
+    - 有全级别告警 → 只跑 每日全级别
+    """
+    selected_codes = set()
+    
+    # 默认必须跑每日全级别
+    selected_codes.add('158515019703296')
+    
+    for alert in alerts:
+        table = alert.get('table', '')
+        level = alert.get('level', '')
+        
+        # 根据表名或级别判断
+        if 'dwd' in table.lower() or level in ['1', 'P1', 'L1']:
+            # DWD层或1级表
+            selected_codes.add('158515019593728')  # 1级表复验
+        elif 'dwb' in table.lower() or level in ['2', 'P2', 'L2']:
+            # DWB层或2级表
+            selected_codes.add('158515019630592')  # 2级表复验
+        elif 'ads' in table.lower() or level in ['3', 'P3', 'L3']:
+            # ADS层或3级表
+            selected_codes.add('158515019667456')  # 3级表复验
+    
+    # 根据选中的code返回对应的工作流配置
+    selected_workflows = []
+    for wf in FUYAN_WORKFLOWS_ALL:
+        if wf['code'] in selected_codes:
+            selected_workflows.append(wf)
+    
+    return selected_workflows
+
+
+# 向后兼容，保留原变量名
+FUYAN_WORKFLOWS = FUYAN_WORKFLOWS_DEFAULT
 
 
 def log(msg):
@@ -209,10 +280,17 @@ def step3_execute_with_limits(tasks):
     return results
 
 
-def step4_record_and_fuyan(results):
-    """步骤4: 记录重跑次数，执行复验的脚步（全部6个），执行完成后再次运行查看数据库告警"""
+def step4_record_and_fuyan(results, alerts=None, mode='default'):
+    """
+    步骤4: 记录重跑次数，执行复验工作流，执行完成后再次运行查看数据库告警
+    
+    Args:
+        results: 修复结果列表
+        alerts: 告警列表，用于智能选择复验
+        mode: 'default'(默认3个), 'all'(全部6个), 'smart'(智能判断)
+    """
     log("\n" + "="*70)
-    log("【步骤4】记录重跑次数 + 执行全部6个复验 + 再次检查告警")
+    log("【步骤4】记录重跑次数 + 执行复验 + 再次检查告警")
     log("="*70)
     
     # 4.1 记录重跑次数
@@ -235,12 +313,18 @@ def step4_record_and_fuyan(results):
     with open(record_file, 'w') as f:
         json.dump(counts, f, indent=2)
     
-    # 4.2 执行全部6个复验工作流
-    log("\n4.2 执行全部6个复验工作流...")
+    # 4.2 获取需要执行的复验工作流列表
+    fuyan_workflows = get_fuyan_workflows(mode=mode, alerts=alerts)
+    
+    log(f"\n4.2 执行复验工作流 (模式: {mode}, 共{len(fuyan_workflows)}个)...")
+    log(f"   选中的复验:")
+    for i, fuyan in enumerate(fuyan_workflows, 1):
+        log(f"   [{i}] {fuyan['name']} (级别: {fuyan.get('level', 'all')})")
+    
     fuyan_results = []
     
-    for i, fuyan in enumerate(FUYAN_WORKFLOWS, 1):
-        log(f"\n  [{i}/6] {fuyan['name']}")
+    for i, fuyan in enumerate(fuyan_workflows, 1):
+        log(f"\n  [{i}/{len(fuyan_workflows)}] {fuyan['name']}")
         
         curl_cmd = f"""curl -s -X POST '{DS_BASE}/projects/158515019231232/executors/start-process-instance' \
   -H 'token: {DS_TOKEN}' \
@@ -560,8 +644,10 @@ def main():
     # 步骤3: 执行重跑（带限制条件，指定dt）
     results = step3_execute_with_limits(tasks)
     
-    # 步骤4: 记录+复验（全部6个）+再次检查
-    fuyan_results = step4_record_and_fuyan(results)
+    # 步骤4: 记录+复验+再次检查
+    # mode可选: 'default'(默认3个), 'all'(全部6个), 'smart'(智能判断)
+    fuyan_mode = 'smart'  # 使用智能判断模式，根据告警自动选择复验
+    fuyan_results = step4_record_and_fuyan(results, alerts=alerts, mode=fuyan_mode)
     
     # 步骤5: 发送报告（成功dt=?，失败@陈江川）
     fixed, failed = step5_send_report(results, fuyan_results)
@@ -573,11 +659,11 @@ def main():
     step7_send_tv_report(results, fuyan_results, fixed, failed)
     
     log("\n" + "="*70)
-    log("✅ 7步流程全部完成，无遗漏")
+    log("✅ 8步流程全部完成，无遗漏")
     log("="*70)
     log(f"\n📊 最终统计:")
     log(f"  修复任务: {len(fixed)}成功, {len(failed)}失败")
-    log(f"  复验工作流: 6个全部执行")
+    log(f"  复验工作流: {len(fuyan_results)}个执行")
     log(f"  记录文件: 3类已保存")
     log(f"  TV报告: 已发送")
 
