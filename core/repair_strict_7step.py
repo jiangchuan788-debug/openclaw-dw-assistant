@@ -74,15 +74,24 @@ def ds_api_get(endpoint):
 
 
 def ds_api_post(endpoint, data):
-    """DS API POST 请求"""
+    """DS API POST 请求 - 使用 form-data 格式"""
     url = f"{DS_BASE}{endpoint}"
+    
+    # 将数据转换为 form-data 格式
+    from urllib.parse import urlencode
+    if isinstance(data, dict):
+        encoded_data = urlencode(data).encode('utf-8')
+    else:
+        encoded_data = data.encode('utf-8') if isinstance(data, str) else data
+    
     req = urllib.request.Request(
         url,
-        data=json.dumps(data).encode('utf-8'),
-        headers={'Content-Type': 'application/json'},
+        data=encoded_data,
+        headers={'Content-Type': 'application/x-www-form-urlencoded'},
         method='POST'
     )
     req.add_header('token', DS_TOKEN)
+    
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode('utf-8'))
@@ -157,9 +166,21 @@ def step1_scan_alerts():
             rows = cursor.fetchall()
             
             for row in rows:
+                # 正确识别需要修复的表
+                # 根据告警逻辑：通常应该修复 DWD/DWB 层的表（目标表）
                 src_tbl = row.get('src_tbl') or ''
                 dest_tbl = row.get('dest_tbl') or ''
-                table_name = src_tbl if src_tbl else dest_tbl
+                src_db = row.get('src_db') or ''
+                dest_db = row.get('dest_db') or ''
+                
+                # 优先选择 DWD/DWB/ADS 层的表作为修复目标
+                if dest_db.lower() in ['dwd', 'dwb', 'ads', 'dws'] and dest_tbl:
+                    table_name = dest_tbl
+                elif src_db.lower() in ['dwd', 'dwb', 'ads', 'dws'] and src_tbl:
+                    table_name = src_tbl
+                else:
+                    # 默认使用 dest_tbl（目标表）
+                    table_name = dest_tbl if dest_tbl else src_tbl
                 
                 begin_time = row.get('begin')
                 if begin_time:
@@ -309,6 +330,7 @@ def start_task_only(workflow_code, task_code, dt):
     """
     启动特定任务（TASK_ONLY模式）
     """
+    # form-data 格式，参数直接传递
     data = {
         'processDefinitionCode': workflow_code,
         'startNodeList': task_code,
@@ -328,6 +350,39 @@ def start_task_only(workflow_code, task_code, dt):
     return success, result
 
 
+def wait_for_instance_complete(instance_id, timeout=600, check_interval=10):
+    """
+    等待工作流实例完成
+    
+    Args:
+        instance_id: 实例ID
+        timeout: 最大等待时间（秒）
+        check_interval: 检查间隔（秒）
+    
+    Returns:
+        (success, state) - 是否成功，最终状态
+    """
+    import time
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        success, data = ds_api_get(f"/projects/{PROJECT_CODE}/process-instances/{instance_id}")
+        if success:
+            state = data.get('state', '')
+            log(f"    ⏳ 实例 {instance_id} 状态: {state}")
+            
+            # 检查是否已完成
+            if state in ['SUCCESS', 'FAILURE', 'STOP', 'KILL']:
+                return state == 'SUCCESS', state
+        else:
+            log(f"    ⚠️ 查询实例状态失败: {data}")
+        
+        time.sleep(check_interval)
+    
+    log(f"    ⏰ 等待实例 {instance_id} 超时")
+    return False, 'TIMEOUT'
+
+
 def step3_execute_with_limits(tasks):
     """步骤3: 执行修复（带限制条件）"""
     log("\n" + "="*70)
@@ -336,6 +391,7 @@ def step3_execute_with_limits(tasks):
     
     results = []
     processed_tables = set()
+    running_instances = []  # 记录正在运行的实例
     
     for i, task in enumerate(tasks, 1):
         table = task['table']
@@ -386,10 +442,21 @@ def step3_execute_with_limits(tasks):
         
         if success:
             instance_id = result.get('data', 'unknown')
-            log(f"  ✅ 修复成功，实例ID: {instance_id}")
+            log(f"  ✅ 修复任务已启动，实例ID: {instance_id}")
             task['status'] = 'success'
             task['instance_id'] = instance_id
             processed_tables.add(table)
+            
+            # 等待修复任务完成
+            log(f"  ⏳ 等待修复任务完成...")
+            repair_success, final_state = wait_for_instance_complete(instance_id, timeout=300, check_interval=10)
+            if repair_success:
+                log(f"  ✅ 修复任务已完成成功")
+                task['repair_completed'] = True
+            else:
+                log(f"  ⚠️ 修复任务状态: {final_state}")
+                task['repair_completed'] = False
+                task['final_state'] = final_state
         else:
             error_msg = result.get('msg', '未知错误')
             log(f"  ❌ 修复失败: {error_msg}")
@@ -398,6 +465,15 @@ def step3_execute_with_limits(tasks):
         
         results.append(task)
         time.sleep(3)
+    
+    # 等待所有修复任务完成
+    log(f"\n⏳ 等待所有修复任务完成...")
+    for task in results:
+        if task.get('status') == 'success' and task.get('instance_id') and not task.get('repair_completed'):
+            log(f"  等待 {task['table']} 完成...")
+            success, state = wait_for_instance_complete(task['instance_id'], timeout=300, check_interval=10)
+            task['repair_completed'] = success
+            task['final_state'] = state
     
     return results
 
@@ -464,7 +540,16 @@ def step4_record_and_fuyan(results, alerts=None, mode='smart'):
             fuyan_results.append({'name': fuyan['name'], 'status': 'failed', 'error': error_msg})
     
     log("\n4.3 等待复验完成...")
-    time.sleep(5)
+    for fuyan in fuyan_results:
+        if fuyan.get('status') == 'success' and fuyan.get('id'):
+            log(f"  等待 {fuyan['name']} 完成...")
+            success, state = wait_for_instance_complete(fuyan['id'], timeout=600, check_interval=15)
+            fuyan['completed'] = success
+            fuyan['final_state'] = state
+            if success:
+                log(f"    ✅ 复验完成成功")
+            else:
+                log(f"    ⚠️ 复验状态: {state}")
     
     return fuyan_results
 
