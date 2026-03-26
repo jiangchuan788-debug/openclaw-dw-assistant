@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-智能告警修复 - 生产环境版本 (v4.1)
-真实调用API，异步执行（不等任务完成）
-参考v2.8的执行逻辑
+智能告警修复 - 生产环境版本 (v4.2)
+真实调用API，等待修复任务完成后才执行复验
 
 作者: OpenClaw
 日期: 2026-03-26
@@ -240,6 +239,93 @@ def start_task_only(workflow_code, task_code, dt):
     return success, result
 
 
+def get_instance_status(instance_id):
+    """查询工作流实例状态"""
+    endpoint = f"/projects/{PROJECT_CODE}/process-instances/{instance_id}"
+    success, data, msg = ds_api_get(endpoint)
+    if success and data:
+        state = data.get('state', 'UNKNOWN')
+        return state, data
+    return 'UNKNOWN', {}
+
+
+def wait_for_instances_complete(results, timeout=1800, poll_interval=10):
+    """等待所有修复实例完成
+    
+    Args:
+        results: 修复任务结果列表
+        timeout: 最大等待时间（秒），默认30分钟
+        poll_interval: 轮询间隔（秒），默认10秒
+    
+    Returns:
+        success_tasks: 成功的任务列表
+        failed_tasks: 失败的任务列表
+    """
+    log("\n" + "="*70)
+    log("【步骤3.5】等待修复任务完成")
+    log("="*70)
+    
+    # 筛选出需要等待的任务（有instance_id的）
+    pending_tasks = [r for r in results if r.get('instance_id') and r.get('status') == 'success']
+    
+    if not pending_tasks:
+        log("  没有需要等待的任务")
+        return [], []
+    
+    log(f"  共 {len(pending_tasks)} 个任务需要等待完成")
+    log(f"  超时设置: {timeout}秒, 轮询间隔: {poll_interval}秒")
+    
+    start_time = time.time()
+    completed_tasks = []
+    failed_tasks = []
+    
+    while pending_tasks and (time.time() - start_time) < timeout:
+        still_pending = []
+        
+        for task in pending_tasks:
+            table = task['table']
+            instance_id = task['instance_id']
+            
+            state, data = get_instance_status(instance_id)
+            
+            if state in ['SUCCESS', 'FINISHED']:
+                log(f"  ✅ {table}: 完成 (状态: {state})")
+                task['final_status'] = 'success'
+                task['end_time'] = data.get('endTime')
+                completed_tasks.append(task)
+            elif state in ['FAILED', 'KILL', 'STOP']:
+                log(f"  ❌ {table}: 失败 (状态: {state})")
+                task['final_status'] = 'failed'
+                task['error'] = f"实例状态: {state}"
+                failed_tasks.append(task)
+            else:
+                # 仍在运行中
+                log(f"  ⏳ {table}: 运行中 (状态: {state})")
+                still_pending.append(task)
+        
+        pending_tasks = still_pending
+        
+        if pending_tasks:
+            elapsed = int(time.time() - start_time)
+            remaining = timeout - elapsed
+            log(f"  ⏱️  已等待 {elapsed}秒, 还剩 {len(pending_tasks)} 个任务, 剩余时间 {remaining}秒")
+            time.sleep(poll_interval)
+    
+    # 检查是否超时
+    if pending_tasks:
+        log(f"\n  ⚠️  等待超时！以下任务未完成:")
+        for task in pending_tasks:
+            log(f"    - {task['table']}: {task['instance_id']}")
+            task['final_status'] = 'timeout'
+            failed_tasks.append(task)
+    
+    log(f"\n  📊 等待结果统计:")
+    log(f"    ✅ 成功: {len(completed_tasks)} 个")
+    log(f"    ❌ 失败/超时: {len(failed_tasks)} 个")
+    
+    return completed_tasks, failed_tasks
+
+
 def step3_execute_with_limits(tasks):
     """步骤3: 执行修复"""
     log("\n" + "="*70)
@@ -322,13 +408,13 @@ def start_fuyan_workflow(workflow_code):
     return success, result
 
 
-def step4_record_and_fuyan(results, alerts=None):
-    """步骤4: 记录+复验（异步，不等完成）"""
+def step4_record_and_fuyan(success_tasks, failed_tasks, alerts=None):
+    """步骤4: 记录重跑次数 + 执行复验（仅当修复成功时）"""
     log("\n" + "="*70)
     log("【步骤4】记录重跑次数 + 执行复验")
     log("="*70)
     
-    # 4.1 记录重跑次数
+    # 4.1 记录重跑次数（只记录成功的）
     log("\n4.1 记录重跑次数...")
     record_file = f"{WORKSPACE}/auto_repair_records/repair_counts.json"
     counts = {}
@@ -337,18 +423,29 @@ def step4_record_and_fuyan(results, alerts=None):
             counts = json.load(f)
     
     today = datetime.now().strftime('%Y-%m-%d')
-    for task in results:
-        if task.get('status') == 'success':
-            table = task['table']
-            if table not in counts:
-                counts[table] = {}
-            counts[table][today] = counts[table].get(today, 0) + 1
-            log(f"  📝 {table}: 今日第{counts[table][today]}次")
+    for task in success_tasks:
+        table = task['table']
+        if table not in counts:
+            counts[table] = {}
+        counts[table][today] = counts[table].get(today, 0) + 1
+        log(f"  📝 {table}: 今日第{counts[table][today]}次")
     
     with open(record_file, 'w') as f:
         json.dump(counts, f, indent=2)
     
-    # 4.2 执行复验（异步启动，不等完成）
+    # 4.2 执行复验（仅当所有修复都成功时才执行）
+    if not success_tasks:
+        log("\n4.2 ⚠️ 没有成功的修复任务，跳过复验")
+        return []
+    
+    if failed_tasks:
+        log(f"\n4.2 ⚠️ 存在 {len(failed_tasks)} 个失败的修复任务，跳过复验")
+        for task in failed_tasks:
+            log(f"    ❌ {task['table']}: {task.get('error', '失败')}")
+        return []
+    
+    log(f"\n4.2 ✅ 所有修复任务成功 ({len(success_tasks)}个)，开始执行复验...")
+    
     # 智能选择复验工作流
     selected_codes = {'158515019703296'}  # 每日全级别必跑
     for alert in alerts or []:
@@ -361,7 +458,7 @@ def step4_record_and_fuyan(results, alerts=None):
     fuyan_workflows = [wf for wf in FUYAN_WORKFLOWS if wf['code'] in selected_codes]
     fuyan_results = []
     
-    log(f"\n4.2 执行复验工作流 (共{len(fuyan_workflows)}个)...")
+    log(f"\n4.3 执行复验工作流 (共{len(fuyan_workflows)}个)...")
     for i, fuyan in enumerate(fuyan_workflows, 1):
         log(f"  [{i}] {fuyan['name']}")
         success, result = start_fuyan_workflow(fuyan['code'])
@@ -374,8 +471,6 @@ def step4_record_and_fuyan(results, alerts=None):
             log(f"    ❌ 启动失败: {error_msg}")
             fuyan_results.append({'name': fuyan['name'], 'status': 'failed', 'error': error_msg})
     
-    # 不等复验完成，直接返回
-    log("\n4.3 复验工作流已启动（异步执行）")
     return fuyan_results
 
 
@@ -413,7 +508,7 @@ def step5_save_report(results, fuyan_results):
 def main():
     """主函数"""
     log("="*70)
-    log("🚀 智能告警修复流程（生产环境版本 v4.1）")
+    log("🚀 智能告警修复流程（生产环境版本 v4.2）")
     log("="*70)
     log(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log("")
@@ -427,11 +522,14 @@ def main():
     # 步骤2: 查找工作流
     tasks = step2_find_locations(alerts)
     
-    # 步骤3: 执行修复
+    # 步骤3: 执行修复（启动任务）
     results = step3_execute_with_limits(tasks)
     
-    # 步骤4: 记录+复验
-    fuyan_results = step4_record_and_fuyan(results, alerts)
+    # 步骤3.5: 等待所有修复任务完成
+    success_tasks, failed_tasks = wait_for_instances_complete(results)
+    
+    # 步骤4: 记录+复验（仅当所有修复成功时才执行复验）
+    fuyan_results = step4_record_and_fuyan(success_tasks, failed_tasks, alerts)
     
     # 步骤5: 保存记录
     fixed, failed = step5_save_report(results, fuyan_results)
@@ -441,8 +539,9 @@ def main():
     log("="*70)
     log(f"\n📊 最终统计:")
     log(f"  扫描告警: {len(alerts)} 个")
-    log(f"  修复成功: {len(fixed)} 个")
-    log(f"  失败/跳过: {len(failed)} 个")
+    log(f"  修复启动: {len([r for r in results if r.get('status')=='success'])} 个")
+    log(f"  修复成功: {len(success_tasks)} 个")
+    log(f"  修复失败: {len(failed_tasks)} 个")
     log(f"  执行复验: {len(fuyan_results)} 个")
 
 
