@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-异常调度实例自动检测与停止脚本（CSV版本）
-使用本地CSV文件中的调度配置进行检测，避免API分页问题
-
-异常定义:
-1. 无定时配置但被调度启动
-2. 调度已下线但仍被启动
+异常调度实例自动检测与停止脚本（全覆盖版本）
+规则：所有运行中实例，只要在CSV中不存在且是调度启动，就停止
 
 作者: OpenClaw
-日期: 2026-03-25
+日期: 2026-03-26
 """
 
 import sys
@@ -80,48 +76,60 @@ def send_tv_report(message):
 
 
 def load_schedules_from_csv():
-    """从CSV文件加载调度配置"""
-    schedules = {}
+    """从CSV文件加载所有调度配置（只保存Code）"""
+    schedule_codes = set()
     
     if not os.path.exists(SCHEDULES_CSV):
         print(f"⚠️ 警告: CSV文件不存在 {SCHEDULES_CSV}")
-        return schedules
+        return schedule_codes
     
     try:
         with open(SCHEDULES_CSV, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                code = row.get('工作流Code', '')
+                code = row.get('工作流Code', '').strip()
                 if code:
-                    schedules[code] = {
-                        'name': row.get('工作流名称', ''),
-                        'cron': row.get('Cron表达式', ''),
-                        'status': row.get('状态', 'OFFLINE')
-                    }
-        print(f"✅ 从CSV加载了 {len(schedules)} 个调度配置")
+                    schedule_codes.add(code)
+        print(f"✅ 从CSV加载了 {len(schedule_codes)} 个调度配置")
+        print(f"📋 调度Code列表: {sorted(schedule_codes)[:5]}... (显示前5个)")
     except Exception as e:
         print(f"❌ 读取CSV失败: {e}")
     
-    return schedules
+    return schedule_codes
 
 
 def fetch_running_instances():
-    """获取正在运行的工作流实例"""
-    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-instances"
-    params = "?stateType=RUNNING_EXECUTION&pageNo=1&pageSize=100"
+    """获取所有运行中的工作流实例（多页查询）"""
+    all_instances = []
+    page_no = 1
+    page_size = 100
     
-    req = urllib.request.Request(url + params)
-    req.add_header('token', DS_CONFIG['token'])
+    while True:
+        url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-instances"
+        params = f"?stateType=RUNNING_EXECUTION&pageNo={page_no}&pageSize={page_size}"
+        
+        req = urllib.request.Request(url + params)
+        req.add_header('token', DS_CONFIG['token'])
+        
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                if result.get('code') == 0:
+                    instances = result.get('data', {}).get('totalList', [])
+                    all_instances.extend(instances)
+                    
+                    # 检查是否还有更多页
+                    total = result.get('data', {}).get('total', 0)
+                    if page_no * page_size >= total or len(instances) < page_size:
+                        break
+                    page_no += 1
+                else:
+                    break
+        except Exception as e:
+            print(f"❌ 查询实例失败: {e}")
+            break
     
-    try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            if result.get('code') == 0:
-                return True, result.get('data', {}).get('totalList', [])
-    except Exception as e:
-        print(f"❌ 查询实例失败: {e}")
-    
-    return False, []
+    return all_instances
 
 
 def get_instance_detail(instance_id):
@@ -142,29 +150,11 @@ def get_instance_detail(instance_id):
     return {}
 
 
-def check_workflow_schedule(process_code, schedules_dict):
-    """检查工作流是否有定时调度配置（从CSV）"""
-    code_str = str(process_code)
-    
-    if code_str in schedules_dict:
-        sch = schedules_dict[code_str]
-        return {
-            'has_schedule': True,
-            'schedule_status': sch.get('status', 'OFFLINE'),
-            'cron': sch.get('cron', 'N/A'),
-            'schedule_name': sch.get('name', 'N/A')
-        }
-    
-    return {
-        'has_schedule': False,
-        'schedule_status': 'NONE',
-        'cron': 'N/A',
-        'schedule_name': 'N/A'
-    }
-
-
 def stop_instance(instance_id):
-    """停止工作流实例"""
+    """
+    停止工作流实例
+    API: POST /projects/{code}/executors/execute
+    """
     url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/executors/execute"
     
     data = {
@@ -183,164 +173,157 @@ def stop_instance(instance_id):
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
             result = json.loads(response.read().decode('utf-8'))
-            return result.get('code') == 0
+            success = result.get('code') == 0
+            if not success:
+                print(f"  ⚠️ 停止失败: {result.get('msg', '未知错误')}")
+            return success
     except Exception as e:
         print(f"  ❌ 停止异常: {e}")
         return False
 
 
 def main():
-    """主函数"""
+    """主函数 - 全覆盖检测与停止"""
     print("="*80)
-    print("🔍 异常调度实例自动检测与停止（CSV版本）")
+    print("🔍 异常调度实例全覆盖检测与停止")
     print("="*80)
     print(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"📁 调度配置CSV: {SCHEDULES_CSV}")
+    print(f"📝 规则: CSV中不存在 + SCHEDULER启动 → 停止")
     print("")
     
-    # 从CSV加载调度配置
-    schedules_dict = load_schedules_from_csv()
+    # 从CSV加载所有调度配置Code
+    schedule_codes = load_schedules_from_csv()
     
-    if not schedules_dict:
-        print("❌ 无法加载调度配置，请检查CSV文件是否存在")
+    if not schedule_codes:
+        print("❌ 无法加载调度配置，退出")
         return
     
-    # 获取运行中的实例
-    success, instances = fetch_running_instances()
-    if not success:
-        print("❌ 查询实例失败")
-        return
+    # 获取所有运行中的实例
+    instances = fetch_running_instances()
     
     if not instances:
         print("✅ 当前没有运行中的工作流实例")
-        # 钉钉：发送空报告
-        report = f"""📊 异常调度检测报告
+        report = f"""📊 异常调度全覆盖检测
 
 ⏰ 检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-✅ 状态: 无运行中实例
-💡 未发现异常调度任务"""
+✅ 状态: 无运行中实例"""
         send_dingtalk(report)
-        # TV：不发送（无异常）
-        print("ℹ️ TV报告未发送（无异常）")
         return
     
     print(f"📋 发现 {len(instances)} 个运行中的实例\n")
     
-    abnormal_instances = []
-    normal_count = 0
-    stopped_count = 0
+    # 分类统计
+    normal_instances = []      # 正常：在CSV中
+    abnormal_stopped = []      # 异常已停止
+    abnormal_failed = []       # 异常停止失败
+    ignored_instances = []     # 忽略：非SCHEDULER启动
     
     for i, inst in enumerate(instances, 1):
         instance_id = inst.get('id')
         name = inst.get('name', 'N/A')
-        process_code = inst.get('processDefinitionCode')
-        start_time = inst.get('startTime', 'N/A')
+        process_code = str(inst.get('processDefinitionCode', ''))
         
-        # 获取实例详情
+        print(f"[{i}/{len(instances)}] 检查: {name[:50]}")
+        print(f"    实例ID: {instance_id}")
+        print(f"    工作流Code: {process_code}")
+        
+        # 获取实例详情（查看启动类型）
         detail = get_instance_detail(instance_id)
         command_type = detail.get('commandType', 'UNKNOWN')
         
-        print(f"[{i}/{len(instances)}] 检查: {name[:40]}")
-        print(f"    实例ID: {instance_id}")
         print(f"    启动类型: {command_type}")
         
-        # 只有 SCHEDULER 类型的才需要检查
-        if command_type == 'SCHEDULER':
-            # 从CSV检查调度配置
-            schedule_info = check_workflow_schedule(process_code, schedules_dict)
-            
-            has_schedule = schedule_info['has_schedule']
-            schedule_status = schedule_info['schedule_status']
-            
-            print(f"    定时配置: {'有' if has_schedule else '无'}")
-            if has_schedule:
-                print(f"    调度状态: {schedule_status}")
-            
-            # 判断是否为异常
-            is_abnormal = False
-            abnormal_reason = ""
-            
-            if not has_schedule:
-                is_abnormal = True
-                abnormal_reason = "无定时配置但被调度启动"
-            elif schedule_status == 'OFFLINE':
-                is_abnormal = True
-                abnormal_reason = "调度已下线但仍被启动"
-            
-            if is_abnormal:
-                print(f"    ⚠️ 异常: {abnormal_reason}")
-                print(f"    🛑 正在停止...")
-                
-                # 自动停止（无需确认）
-                if stop_instance(instance_id):
-                    print(f"    ✅ 停止成功")
-                    stopped_count += 1
-                    abnormal_instances.append({
-                        'id': instance_id,
-                        'name': name,
-                        'reason': abnormal_reason,
-                        'start_time': start_time,
-                        'stopped': True
-                    })
-                else:
-                    print(f"    ❌ 停止失败")
-                    abnormal_instances.append({
-                        'id': instance_id,
-                        'name': name,
-                        'reason': abnormal_reason,
-                        'start_time': start_time,
-                        'stopped': False
-                    })
-            else:
-                print(f"    ✅ 正常")
-                normal_count += 1
+        # 检查是否在CSV中
+        in_csv = process_code in schedule_codes
+        print(f"    CSV中存在: {'✅ 是' if in_csv else '❌ 否'}")
+        
+        if in_csv:
+            # 在CSV中，正常
+            print(f"    ✅ 正常（有定时配置）")
+            normal_instances.append({
+                'id': instance_id,
+                'name': name,
+                'code': process_code
+            })
+        elif command_type != 'SCHEDULER':
+            # 不在CSV中，但不是调度启动，忽略
+            print(f"    ⏭️ 忽略（非调度启动: {command_type}）")
+            ignored_instances.append({
+                'id': instance_id,
+                'name': name,
+                'code': process_code,
+                'command_type': command_type
+            })
         else:
-            # 非调度启动的，直接认为是正常的
-            print(f"    ✅ 正常: {command_type}")
-            normal_count += 1
+            # 不在CSV中，且是调度启动 → 异常，需要停止
+            print(f"    ⚠️ 异常（无配置+调度启动）")
+            print(f"    🛑 正在停止...")
+            
+            if stop_instance(instance_id):
+                print(f"    ✅ 停止成功")
+                abnormal_stopped.append({
+                    'id': instance_id,
+                    'name': name,
+                    'code': process_code
+                })
+            else:
+                print(f"    ❌ 停止失败")
+                abnormal_failed.append({
+                    'id': instance_id,
+                    'name': name,
+                    'code': process_code
+                })
         
         print()
     
     # 生成钉钉报告（始终发送）
-    report_lines = ["📊 异常调度检测与停止报告", ""]
+    report_lines = ["📊 异常调度全覆盖检测报告", ""]
     report_lines.append(f"⏰ 检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    report_lines.append("")
+    report_lines.append(f"")
     report_lines.append(f"📋 总实例数: {len(instances)}")
-    report_lines.append(f"✅ 正常实例: {normal_count}")
-    report_lines.append(f"⚠️ 异常实例: {len(abnormal_instances)}")
+    report_lines.append(f"✅ 正常实例: {len(normal_instances)}")
+    report_lines.append(f"⏭️ 忽略实例: {len(ignored_instances)} (非调度启动)")
+    report_lines.append(f"⚠️ 异常已停止: {len(abnormal_stopped)}")
+    report_lines.append(f"❌ 异常停止失败: {len(abnormal_failed)}")
     
-    if abnormal_instances:
+    if abnormal_stopped:
         report_lines.append("")
-        report_lines.append(f"🛑 已停止异常实例 ({stopped_count}/{len(abnormal_instances)}):")
-        for inst in abnormal_instances:
-            status = "✅已停" if inst['stopped'] else "❌失败"
-            report_lines.append(f"  • {inst['name']} [{status}]")
-            report_lines.append(f"    原因: {inst['reason']}")
-            report_lines.append(f"    ID: {inst['id']}")
-    else:
+        report_lines.append("🛑 已停止的异常实例:")
+        for inst in abnormal_stopped:
+            report_lines.append(f"  • {inst['name']}")
+            report_lines.append(f"    ID: {inst['id']} | Code: {inst['code']}")
+    
+    if abnormal_failed:
         report_lines.append("")
-        report_lines.append("✅ 未发现异常调度任务")
+        report_lines.append("❌ 停止失败的异常实例:")
+        for inst in abnormal_failed:
+            report_lines.append(f"  • {inst['name']}")
+            report_lines.append(f"    ID: {inst['id']} | Code: {inst['code']}")
     
     ding_report = "\n".join(report_lines)
     
-    # 发送钉钉报告
+    # 发送报告
     print("="*80)
     print("📤 发送报告...")
     send_dingtalk(ding_report)
     print("✅ 钉钉报告已发送")
     
-    # TV：只在有异常需要通知时发送
-    if abnormal_instances:
+    # TV：有异常时发送（成功停止或停止失败）
+    if abnormal_stopped or abnormal_failed:
         tv_lines = ["📊 异常调度检测与停止报告", ""]
-        tv_lines.append(f"⏰ 检测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        tv_lines.append(f"⏰ {datetime.now().strftime('%H:%M:%S')}")
         tv_lines.append("")
         
-        for inst in abnormal_instances:
-            if inst['stopped']:
-                tv_lines.append(f"✅ 已停止: {inst['name']}")
-            else:
-                tv_lines.append(f"❌ 停止失败: {inst['name']} (需人工处理)")
-            tv_lines.append(f"   原因: {inst['reason']}")
+        if abnormal_stopped:
+            tv_lines.append(f"✅ 已停止 {len(abnormal_stopped)} 个:")
+            for inst in abnormal_stopped:
+                tv_lines.append(f"  • {inst['name']}")
+        
+        if abnormal_failed:
+            tv_lines.append(f"❌ 停止失败 {len(abnormal_failed)} 个:")
+            for inst in abnormal_failed:
+                tv_lines.append(f"  • {inst['name']}")
         
         tv_report = "\n".join(tv_lines)
         send_tv_report(tv_report)
