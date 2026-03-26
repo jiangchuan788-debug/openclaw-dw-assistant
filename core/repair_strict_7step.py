@@ -17,7 +17,7 @@
 # 自动加载环境变量
 import sys
 sys.path.insert(0, '/home/node/.openclaw/workspace')
-import auto_load_env
+from config import auto_load_env
 
 import subprocess
 import json
