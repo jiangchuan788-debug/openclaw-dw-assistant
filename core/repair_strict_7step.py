@@ -146,13 +146,20 @@ def step1_scan_alerts():
             
             for row in rows:
                 # 从表名中提取信息
-                src_tbl = row['src_tbl'] or ''
-                dest_tbl = row['dest_tbl'] or ''
+                src_tbl = row.get('src_tbl') or ''
+                dest_tbl = row.get('dest_tbl') or ''
                 table_name = src_tbl if src_tbl else dest_tbl
                 
                 # 从 begin/end 提取 dt
-                begin_time = row['begin'] or ''
-                dt = begin_time.split()[0] if begin_time else datetime.now().strftime('%Y-%m-%d')
+                begin_time = row.get('begin')
+                if begin_time:
+                    if isinstance(begin_time, str):
+                        dt = begin_time.split()[0]
+                    else:
+                        # datetime 对象
+                        dt = begin_time.strftime('%Y-%m-%d')
+                else:
+                    dt = datetime.now().strftime('%Y-%m-%d')
                 
                 alerts.append({
                     'id': row['id'],
