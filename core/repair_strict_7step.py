@@ -617,8 +617,8 @@ def main():
     # 步骤3: 执行修复（启动任务）
     results = step3_execute_with_limits(tasks)
 
-    # 步骤3.5: 等待所有修复任务完成
-    success_tasks, failed_tasks = wait_for_instances_complete(results)
+    # 步骤3.5: 等待所有修复任务完成 (超时改为600秒=10分钟)
+    success_tasks, failed_tasks = wait_for_instances_complete(results, timeout=600)
 
     # 步骤4: 记录+复验（无论修复是否成功都执行复验）
     fuyan_results = step4_record_and_fuyan(success_tasks, failed_tasks, alerts)
