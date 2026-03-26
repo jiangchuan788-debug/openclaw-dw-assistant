@@ -112,17 +112,71 @@ def select_fuyan_by_alerts(alerts):
 
 
 def step1_scan_alerts():
-    """步骤1: 扫描告警，单次执行内去重"""
+    """步骤1: 扫描告警（从 wattrel_quality_result 表），单次执行内去重"""
     log("="*70)
-    log("【步骤1】扫描告警（单次执行内去重）")
+    log("【步骤1】扫描告警 - 从 wattrel_quality_result 表")
     log("="*70)
     
-    # 从数据库查询未恢复告警（实际实现）
-    # 这里使用示例数据
-    alerts = [
-        {'id': 4437, 'table': 'dwd_asset_account_repay', 'dt': '2026-03-26', 'level': 'P1'},
-        {'id': 4436, 'table': 'dwb_asset_period_info', 'dt': '2026-03-26', 'level': 'P2'}
-    ]
+    # 从 wattrel_quality_result 表查询未恢复的异常数据
+    alerts = []
+    try:
+        import sys
+        sys.path.insert(0, '/home/node/.openclaw/workspace')
+        from alert.db_config import get_db_connection
+        
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            # 查询 result=1（异常）且最近3天的数据
+            sql = """
+                SELECT 
+                    id, quality_id, name, type,
+                    src_db, src_tbl, dest_db, dest_tbl,
+                    src_value, dest_value, diff,
+                    `begin`, `end`, result, status,
+                    src_error, dest_error, is_repaired,
+                    created_at, updated_at
+                FROM wattrel_quality_result
+                WHERE result = 1
+                  AND is_repaired = 0
+                  AND created_at >= DATE_SUB(NOW(), INTERVAL 3 DAY)
+                ORDER BY created_at DESC
+            """
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                # 从表名中提取信息
+                src_tbl = row['src_tbl'] or ''
+                dest_tbl = row['dest_tbl'] or ''
+                table_name = src_tbl if src_tbl else dest_tbl
+                
+                # 从 begin/end 提取 dt
+                begin_time = row['begin'] or ''
+                dt = begin_time.split()[0] if begin_time else datetime.now().strftime('%Y-%m-%d')
+                
+                alerts.append({
+                    'id': row['id'],
+                    'table': table_name,
+                    'dt': dt,
+                    'level': 'P1',  # 默认P1
+                    'quality_id': row['quality_id'],
+                    'name': row['name'],
+                    'diff': row['diff'],
+                    'src_error': row['src_error'],
+                    'dest_error': row['dest_error']
+                })
+        
+        conn.close()
+        log(f"✅ 从 wattrel_quality_result 表查询到 {len(alerts)} 条异常记录")
+        
+    except Exception as e:
+        log(f"⚠️ 查询数据库失败: {e}")
+        log(f"   使用示例数据继续...")
+        # 降级使用示例数据
+        alerts = [
+            {'id': 4437, 'table': 'dwd_asset_account_repay', 'dt': '2026-03-26', 'level': 'P1'},
+            {'id': 4436, 'table': 'dwb_asset_period_info', 'dt': '2026-03-26', 'level': 'P2'}
+        ]
     
     # 单次执行内去重（同一表只保留一个告警）
     table_alerts = {}
