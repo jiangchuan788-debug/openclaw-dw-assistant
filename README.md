@@ -61,13 +61,67 @@ export DS_TOKEN='your_token'
 export DB_PASSWORD='your_password'
 ```
 
-### 2. 手动执行告警修复
+### 2. 首次部署（复现指南）
+
+如果是新的 OpenClaw 实例，请按照以下步骤初始化：
+
+#### 步骤1: 克隆代码
+```bash
+git clone https://github.com/jiangchuan788-debug/openclaw-dw-assistant.git
+cd openclaw-dw-assistant
+```
+
+#### 步骤2: 初始化配置
+```bash
+# 复制模板文件
+cp AGENTS.md.template AGENTS.md
+cp SOUL.md.template SOUL.md
+cp USER.md.template USER.md
+cp TOOLS.md.template TOOLS.md
+cp IDENTITY.md.template IDENTITY.md
+
+# 编辑这些文件，填写你的配置
+# 然后删除模板文件（可选）
+rm *.template
+```
+
+#### 步骤3: 配置环境变量
+编辑 `~/.bashrc`，添加：
+```bash
+export DS_TOKEN='your_ds_token'
+export DB_PASSWORD='your_db_password'
+export DB_HOST='172.20.0.235'
+export DB_PORT='13306'
+export DB_USER='e_ds'
+export DB_NAME='wattrel'
+```
+
+然后执行：
+```bash
+source ~/.bashrc
+```
+
+#### 步骤4: 验证配置
+```bash
+python3 task_execution_checker.py --task all
+```
+
+#### 步骤5: 测试执行
+```bash
+# 测试异常调度检测
+python3 auto_stop_abnormal_schedule.py
+
+# 测试智能告警修复
+python3 repair_strict_7step.py
+```
+
+### 3. 手动执行告警修复
 
 ```bash
 python3 repair_strict_7step.py
 ```
 
-### 3. 手动执行异常调度检测
+### 4. 手动执行异常调度检测
 
 ```bash
 python3 auto_stop_abnormal_schedule.py
