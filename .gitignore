@@ -44,3 +44,6 @@ pymysql/
 # 测试文件
 test_*.py
 *_test.py
+
+# SQL 导出目录（临时文件）
+sql_export/
