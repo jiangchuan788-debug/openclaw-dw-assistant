@@ -288,7 +288,7 @@ openclaw cron add \
 cd /home/node/.openclaw/workspace
 python3 core/repair_strict_7step.py
 
-# 测试版本（快速验证，使用示例数据）
+# 测试版本（快速验证）
 python3 tests/test_repair.py
 ```
 
