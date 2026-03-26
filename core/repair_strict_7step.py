@@ -28,7 +28,7 @@ from datetime import datetime
 from collections import defaultdict
 
 # 导入配置
-from config import get_ds_token, TV_CONFIG
+from config.config import get_ds_token, TV_CONFIG
 
 WORKSPACE = '/home/node/.openclaw/workspace'
 DING_ID = 'cidune9y06rl1j0uelxqielqw=='
@@ -170,13 +170,9 @@ def step1_scan_alerts():
         log(f"✅ 从 wattrel_quality_result 表查询到 {len(alerts)} 条异常记录")
         
     except Exception as e:
-        log(f"⚠️ 查询数据库失败: {e}")
-        log(f"   使用示例数据继续...")
-        # 降级使用示例数据
-        alerts = [
-            {'id': 4437, 'table': 'dwd_asset_account_repay', 'dt': '2026-03-26', 'level': 'P1'},
-            {'id': 4436, 'table': 'dwb_asset_period_info', 'dt': '2026-03-26', 'level': 'P2'}
-        ]
+        log(f"❌ 查询数据库失败: {e}")
+        log(f"【步骤1】执行失败，流程终止")
+        raise RuntimeError(f"扫描告警失败: {e}")
     
     # 单次执行内去重（同一表只保留一个告警）
     table_alerts = {}

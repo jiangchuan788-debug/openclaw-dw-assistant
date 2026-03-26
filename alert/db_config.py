@@ -36,3 +36,10 @@ def get_db_config():
     """获取数据库配置（检查是否设置）"""
     check_db_config()
     return DB_CONFIG
+
+
+def get_db_connection():
+    """获取数据库连接"""
+    import pymysql
+    check_db_config()
+    return pymysql.connect(**DB_CONFIG)
