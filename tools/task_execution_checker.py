@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 TASKS = {
     'abnormal': {
         'name': '异常调度自动检测',
-        'script': 'auto_stop_abnormal_schedule.py',
+        'script': 'core/auto_stop_abnormal_schedule.py',
         'steps': [
             '步骤1: 加载调度配置',
             '步骤2: 获取运行中实例',
@@ -34,7 +34,7 @@ TASKS = {
     },
     'repair': {
         'name': '智能告警修复',
-        'script': 'repair_strict_7step.py',
+        'script': 'core/repair_strict_7step.py',
         'steps': [
             '步骤1: 扫描告警',
             '步骤2: 查找工作流位置',
