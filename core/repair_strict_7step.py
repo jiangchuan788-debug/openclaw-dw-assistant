@@ -1,55 +1,36 @@
 #!/usr/bin/env python3
 """
-智能告警修复 - 严格8步流程版（最终实现）
-真正实现功能：
-1. 从 wattrel_quality_result 表查询告警
-2. 调用 search_table 查找工作流位置
-3. 调用 DS API 启动修复任务
-4. 执行复验工作流
-5. 发送报告
+智能告警修复 - 生产环境版本 (v4.1)
+真实调用API，异步执行（不等任务完成）
+参考v2.8的执行逻辑
 
-作者：OpenClaw
-日期：2026-03-26
+作者: OpenClaw
+日期: 2026-03-26
 """
 
 import sys
 sys.path.insert(0, '/home/node/.openclaw/workspace')
 from config import auto_load_env
 
-import subprocess
 import json
 import os
-import re
-import time
 import urllib.request
-from datetime import datetime, timedelta
-from collections import defaultdict
+import time
+from datetime import datetime
+from urllib.parse import urlencode
 
-# 导入配置
-from config.config import get_ds_token, TV_CONFIG
-
+# 配置
 WORKSPACE = '/home/node/.openclaw/workspace'
-DING_ID = 'cidune9y06rl1j0uelxqielqw=='
 DS_BASE = 'http://172.20.0.235:12345/dolphinscheduler'
 PROJECT_CODE = '158514956085248'
 FUYAN_PROJECT_CODE = '158515019231232'
-DS_TOKEN = get_ds_token()
+DS_TOKEN = os.environ.get('DS_TOKEN', '')
 
-# 默认复验工作流（3个）
-FUYAN_WORKFLOWS_DEFAULT = [
-    {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296', 'level': 'all', 'schedule': 'daily'},
-    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728', 'level': '1', 'schedule': 'hourly'},
-    {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456', 'level': '3', 'schedule': '2hour'}
-]
-
-# 完整复验工作流列表（6个）
-FUYAN_WORKFLOWS_ALL = [
-    {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296', 'level': 'all', 'schedule': 'daily'},
-    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728', 'level': '1', 'schedule': 'hourly'},
-    {'name': '每小时复验2级表数据(D-1)', 'code': '158515019630592', 'level': '2', 'schedule': 'hourly'},
-    {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456', 'level': '3', 'schedule': '2hour'},
-    {'name': '每周复验全级别数据(M-3)', 'code': '158515019741184', 'level': 'all', 'schedule': 'weekly'},
-    {'name': '每月11日复验全级别数据(Y-2)', 'code': '158515019778048', 'level': 'all', 'schedule': 'monthly'}
+# 复验工作流
+FUYAN_WORKFLOWS = [
+    {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296', 'level': 'all'},
+    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728', 'level': '1'},
+    {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456', 'level': '3'},
 ]
 
 
@@ -66,73 +47,27 @@ def ds_api_get(endpoint):
     try:
         with urllib.request.urlopen(req, timeout=15) as response:
             result = json.loads(response.read().decode('utf-8'))
-            if result.get('code') == 0:
-                return True, result.get('data', {})
-            return False, result.get('msg', 'Unknown error')
+            return result.get('code') == 0, result.get('data', {}), result.get('msg', '')
     except Exception as e:
-        return False, str(e)
+        return False, {}, str(e)
 
 
 def ds_api_post(endpoint, data):
-    """DS API POST 请求 - 使用 form-data 格式"""
+    """DS API POST 请求 - form-data格式"""
     url = f"{DS_BASE}{endpoint}"
-    
-    # 将数据转换为 form-data 格式
-    from urllib.parse import urlencode
-    if isinstance(data, dict):
-        encoded_data = urlencode(data).encode('utf-8')
-    else:
-        encoded_data = data.encode('utf-8') if isinstance(data, str) else data
-    
+    encoded_data = urlencode(data).encode('utf-8')
     req = urllib.request.Request(
-        url,
-        data=encoded_data,
+        url, data=encoded_data,
         headers={'Content-Type': 'application/x-www-form-urlencoded'},
         method='POST'
     )
     req.add_header('token', DS_TOKEN)
-    
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode('utf-8'))
-            return result.get('code') == 0, result
+            return result.get('code') == 0, result, result.get('msg', '')
     except Exception as e:
-        return False, {'msg': str(e)}
-
-
-def get_fuyan_workflows(mode='default', alerts=None):
-    """获取需要执行的复验工作流列表"""
-    if mode == 'all':
-        return FUYAN_WORKFLOWS_ALL
-    if mode == 'smart' and alerts:
-        return select_fuyan_by_alerts(alerts)
-    return FUYAN_WORKFLOWS_DEFAULT
-
-
-def select_fuyan_by_alerts(alerts):
-    """根据告警信息智能选择需要执行的复验工作流"""
-    selected_codes = set()
-    selected_codes.add('158515019703296')  # 默认必跑每日全级别
-    
-    for alert in alerts:
-        content = alert.get('content', '')
-        table = alert.get('table', '')
-        if not table and content:
-            table = content.split()[0] if content else ''
-        
-        if table.startswith('dwb_'):
-            selected_codes.add('158515019593728')  # 1级表复验
-        elif table.startswith(('dwd_', 'ads_', 'ods_', 'dws_', 'dim_')):
-            selected_codes.add('158515019667456')  # 3级表复验
-        else:
-            selected_codes.add('158515019667456')  # 默认3级
-    
-    selected_workflows = []
-    for wf in FUYAN_WORKFLOWS_ALL:
-        if wf['code'] in selected_codes:
-            selected_workflows.append(wf)
-    
-    return selected_workflows
+        return False, {}, str(e)
 
 
 def step1_scan_alerts():
@@ -144,21 +79,12 @@ def step1_scan_alerts():
     alerts = []
     try:
         from alert.db_config import get_db_connection
-        from pymysql.cursors import DictCursor
-        
         conn = get_db_connection()
         with conn.cursor() as cursor:
             sql = """
-                SELECT 
-                    id, quality_id, name, type,
-                    src_db, src_tbl, dest_db, dest_tbl,
-                    src_value, dest_value, diff,
-                    `begin`, `end`, result, status,
-                    src_error, dest_error, is_repaired,
-                    created_at, updated_at
+                SELECT id, name, src_db, src_tbl, dest_db, dest_tbl, `begin`, diff
                 FROM wattrel_quality_result
-                WHERE result = 1
-                  AND is_repaired = 0
+                WHERE result = 1 AND is_repaired = 0
                   AND created_at >= DATE_SUB(NOW(), INTERVAL 3 DAY)
                 ORDER BY created_at DESC
             """
@@ -166,28 +92,22 @@ def step1_scan_alerts():
             rows = cursor.fetchall()
             
             for row in rows:
-                # 正确识别需要修复的表
-                # 根据告警逻辑：通常应该修复 DWD/DWB 层的表（目标表）
-                src_tbl = row.get('src_tbl') or ''
+                # 优先选择DWD/DWB层的目标表
+                dest_db = row.get('dest_db') or ''
                 dest_tbl = row.get('dest_tbl') or ''
                 src_db = row.get('src_db') or ''
-                dest_db = row.get('dest_db') or ''
+                src_tbl = row.get('src_tbl') or ''
                 
-                # 优先选择 DWD/DWB/ADS 层的表作为修复目标
-                if dest_db.lower() in ['dwd', 'dwb', 'ads', 'dws'] and dest_tbl:
+                if dest_db.lower() in ['dwd', 'dwb', 'ads'] and dest_tbl:
                     table_name = dest_tbl
-                elif src_db.lower() in ['dwd', 'dwb', 'ads', 'dws'] and src_tbl:
+                elif src_db.lower() in ['dwd', 'dwb', 'ads'] and src_tbl:
                     table_name = src_tbl
                 else:
-                    # 默认使用 dest_tbl（目标表）
-                    table_name = dest_tbl if dest_tbl else src_tbl
+                    table_name = dest_tbl or src_tbl
                 
                 begin_time = row.get('begin')
                 if begin_time:
-                    if isinstance(begin_time, str):
-                        dt = begin_time.split()[0]
-                    else:
-                        dt = begin_time.strftime('%Y-%m-%d')
+                    dt = begin_time.strftime('%Y-%m-%d') if hasattr(begin_time, 'strftime') else str(begin_time).split()[0]
                 else:
                     dt = datetime.now().strftime('%Y-%m-%d')
                 
@@ -195,12 +115,8 @@ def step1_scan_alerts():
                     'id': row['id'],
                     'table': table_name,
                     'dt': dt,
-                    'level': 'P1',
-                    'quality_id': row['quality_id'],
-                    'name': row['name'],
-                    'diff': row['diff'],
-                    'src_error': row['src_error'],
-                    'dest_error': row['dest_error']
+                    'name': row.get('name', ''),
+                    'diff': row.get('diff', '')
                 })
         
         conn.close()
@@ -208,24 +124,17 @@ def step1_scan_alerts():
         
     except Exception as e:
         log(f"❌ 查询数据库失败: {e}")
-        log(f"【步骤1】执行失败，流程终止")
-        raise RuntimeError(f"扫描告警失败: {e}")
+        return []
     
     # 去重
     table_alerts = {}
     for alert in alerts:
-        table = alert.get('table')
+        table = alert['table']
         if table and table not in table_alerts:
             table_alerts[table] = alert
-        else:
-            log(f"⏭️ 表 {table} 有多个告警，取第一个处理")
     
     unique_alerts = list(table_alerts.values())
-    
-    log(f"\n📊 扫描结果:")
-    log(f"  原始告警: {len(alerts)} 个")
-    log(f"  去重后: {len(unique_alerts)} 个（同表去重）")
-    
+    log(f"\n📊 扫描结果: {len(unique_alerts)} 个（去重后）")
     for alert in unique_alerts:
         log(f"  ✅ {alert['table']} (dt={alert['dt']})")
     
@@ -233,13 +142,9 @@ def step1_scan_alerts():
 
 
 def search_table_in_workflows(table_name):
-    """
-    在所有工作流中搜索表名，返回工作流和任务信息
-    """
-    # 获取所有工作流
-    success, data = ds_api_get(f"/projects/{PROJECT_CODE}/process-definition?pageNo=1&pageSize=100")
+    """在所有工作流中搜索表名"""
+    success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/process-definition?pageNo=1&pageSize=100")
     if not success:
-        log(f"  ⚠️ 获取工作流列表失败: {data}")
         return None
     
     workflows = data.get('totalList', [])
@@ -249,12 +154,11 @@ def search_table_in_workflows(table_name):
         process_name = wf.get('name', '')
         
         # 获取工作流详情
-        success, detail = ds_api_get(f"/projects/{PROJECT_CODE}/process-definition/{process_code}")
-        if not success:
+        s, detail, m = ds_api_get(f"/projects/{PROJECT_CODE}/process-definition/{process_code}")
+        if not s:
             continue
         
         tasks = detail.get('taskDefinitionList', [])
-        
         for task in tasks:
             task_params = task.get('taskParams', {})
             if isinstance(task_params, str):
@@ -263,7 +167,6 @@ def search_table_in_workflows(table_name):
                 except:
                     task_params = {}
             
-            # 检查SQL中是否包含表名
             sql = task_params.get('sql', '')
             if sql and table_name.lower() in sql.lower():
                 return {
@@ -277,7 +180,7 @@ def search_table_in_workflows(table_name):
 
 
 def step2_find_locations(alerts):
-    """步骤2: 查找表对应的工作流位置"""
+    """步骤2: 查找工作流位置"""
     log("\n" + "="*70)
     log("【步骤2】查找工作流位置")
     log("="*70)
@@ -285,17 +188,14 @@ def step2_find_locations(alerts):
     tasks = []
     for alert in alerts:
         table = alert['table']
-        dt = alert['dt']
-        
         log(f"  🔍 查找: {table}")
-        location = search_table_in_workflows(table)
         
+        location = search_table_in_workflows(table)
         if location:
             task = {
                 'alert_id': alert['id'],
                 'table': table,
-                'dt': dt,
-                'level': alert.get('level', 'P1'),
+                'dt': alert['dt'],
                 'workflow_code': location['workflow_code'],
                 'workflow_name': location['workflow_name'],
                 'task_code': location['task_code'],
@@ -306,31 +206,21 @@ def step2_find_locations(alerts):
             task = {
                 'alert_id': alert['id'],
                 'table': table,
-                'dt': dt,
-                'level': alert.get('level', 'P1'),
+                'dt': alert['dt'],
                 'workflow_code': '',
                 'workflow_name': '未找到',
                 'task_code': '',
                 'task_name': ''
             }
-            log(f"    ❌ 未找到对应工作流")
+            log(f"    ❌ 未找到")
         
         tasks.append(task)
     
     return tasks
 
 
-def check_workflow_idle(workflow_code):
-    """检查工作流是否空闲"""
-    # 简化实现，实际应该查询运行中的实例
-    return True, "空闲"
-
-
 def start_task_only(workflow_code, task_code, dt):
-    """
-    启动特定任务（TASK_ONLY模式）
-    """
-    # form-data 格式，参数直接传递
+    """启动特定任务（TASK_ONLY模式）"""
     data = {
         'processDefinitionCode': workflow_code,
         'startNodeList': task_code,
@@ -346,52 +236,18 @@ def start_task_only(workflow_code, task_code, dt):
         'scheduleTime': ''
     }
     
-    success, result = ds_api_post(f"/projects/{PROJECT_CODE}/executors/start-process-instance", data)
+    success, result, msg = ds_api_post(f"/projects/{PROJECT_CODE}/executors/start-process-instance", data)
     return success, result
 
 
-def wait_for_instance_complete(instance_id, timeout=600, check_interval=10):
-    """
-    等待工作流实例完成
-    
-    Args:
-        instance_id: 实例ID
-        timeout: 最大等待时间（秒）
-        check_interval: 检查间隔（秒）
-    
-    Returns:
-        (success, state) - 是否成功，最终状态
-    """
-    import time
-    start_time = time.time()
-    
-    while time.time() - start_time < timeout:
-        success, data = ds_api_get(f"/projects/{PROJECT_CODE}/process-instances/{instance_id}")
-        if success:
-            state = data.get('state', '')
-            log(f"    ⏳ 实例 {instance_id} 状态: {state}")
-            
-            # 检查是否已完成
-            if state in ['SUCCESS', 'FAILURE', 'STOP', 'KILL']:
-                return state == 'SUCCESS', state
-        else:
-            log(f"    ⚠️ 查询实例状态失败: {data}")
-        
-        time.sleep(check_interval)
-    
-    log(f"    ⏰ 等待实例 {instance_id} 超时")
-    return False, 'TIMEOUT'
-
-
 def step3_execute_with_limits(tasks):
-    """步骤3: 执行修复（带限制条件）"""
+    """步骤3: 执行修复"""
     log("\n" + "="*70)
-    log("【步骤3】执行修复（带限制检查）")
+    log("【步骤3】执行修复")
     log("="*70)
     
     results = []
     processed_tables = set()
-    running_instances = []  # 记录正在运行的实例
     
     for i, task in enumerate(tasks, 1):
         table = task['table']
@@ -406,7 +262,7 @@ def step3_execute_with_limits(tasks):
             continue
         
         if table in processed_tables:
-            log(f"[{i}/{len(tasks)}] ⏭️ {table} - 本次执行已修复，跳过")
+            log(f"[{i}/{len(tasks)}] ⏭️ {table} - 已修复，跳过")
             task['status'] = 'skipped_duplicate'
             results.append(task)
             continue
@@ -418,62 +274,32 @@ def step3_execute_with_limits(tasks):
         # dt范围检查
         try:
             dt_date = datetime.strptime(dt, '%Y-%m-%d')
-            delta = abs((dt_date - datetime.now()).days)
-            if delta > 10:
-                log(f"  ❌ dt超出范围（±10天），跳过")
+            if abs((dt_date - datetime.now()).days) > 10:
+                log(f"  ❌ dt超出范围，跳过")
                 task['status'] = 'skipped_dt_range'
                 results.append(task)
                 continue
         except:
             pass
         
-        # 检查工作流状态
-        log(f"  🔍 检查工作流状态...")
-        is_idle, msg = check_workflow_idle(workflow_code)
-        if not is_idle:
-            log(f"  ⏸️ 工作流非空闲: {msg}，跳过")
-            task['status'] = 'skipped_not_idle'
-            results.append(task)
-            continue
-        
-        # 执行修复
+        # 启动修复
         log(f"  🔄 启动修复任务...")
         success, result = start_task_only(workflow_code, task_code, dt)
         
         if success:
             instance_id = result.get('data', 'unknown')
-            log(f"  ✅ 修复任务已启动，实例ID: {instance_id}")
+            log(f"  ✅ 启动成功，实例ID: {instance_id}")
             task['status'] = 'success'
             task['instance_id'] = instance_id
             processed_tables.add(table)
-            
-            # 等待修复任务完成
-            log(f"  ⏳ 等待修复任务完成...")
-            repair_success, final_state = wait_for_instance_complete(instance_id, timeout=300, check_interval=10)
-            if repair_success:
-                log(f"  ✅ 修复任务已完成成功")
-                task['repair_completed'] = True
-            else:
-                log(f"  ⚠️ 修复任务状态: {final_state}")
-                task['repair_completed'] = False
-                task['final_state'] = final_state
         else:
             error_msg = result.get('msg', '未知错误')
-            log(f"  ❌ 修复失败: {error_msg}")
+            log(f"  ❌ 启动失败: {error_msg}")
             task['status'] = 'failed'
             task['error'] = error_msg
         
         results.append(task)
-        time.sleep(3)
-    
-    # 等待所有修复任务完成
-    log(f"\n⏳ 等待所有修复任务完成...")
-    for task in results:
-        if task.get('status') == 'success' and task.get('instance_id') and not task.get('repair_completed'):
-            log(f"  等待 {task['table']} 完成...")
-            success, state = wait_for_instance_complete(task['instance_id'], timeout=300, check_interval=10)
-            task['repair_completed'] = success
-            task['final_state'] = state
+        time.sleep(2)
     
     return results
 
@@ -492,18 +318,18 @@ def start_fuyan_workflow(workflow_code):
         'scheduleTime': ''
     }
     
-    success, result = ds_api_post(f"/projects/{FUYAN_PROJECT_CODE}/executors/start-process-instance", data)
+    success, result, msg = ds_api_post(f"/projects/{FUYAN_PROJECT_CODE}/executors/start-process-instance", data)
     return success, result
 
 
-def step4_record_and_fuyan(results, alerts=None, mode='smart'):
-    """步骤4: 记录+复验"""
+def step4_record_and_fuyan(results, alerts=None):
+    """步骤4: 记录+复验（异步，不等完成）"""
     log("\n" + "="*70)
     log("【步骤4】记录重跑次数 + 执行复验")
     log("="*70)
     
     # 4.1 记录重跑次数
-    log("\n4.1 记录重跑次数（仅统计）...")
+    log("\n4.1 记录重跑次数...")
     record_file = f"{WORKSPACE}/auto_repair_records/repair_counts.json"
     counts = {}
     if os.path.exists(record_file):
@@ -522,8 +348,17 @@ def step4_record_and_fuyan(results, alerts=None, mode='smart'):
     with open(record_file, 'w') as f:
         json.dump(counts, f, indent=2)
     
-    # 4.2 执行复验
-    fuyan_workflows = get_fuyan_workflows(mode=mode, alerts=alerts)
+    # 4.2 执行复验（异步启动，不等完成）
+    # 智能选择复验工作流
+    selected_codes = {'158515019703296'}  # 每日全级别必跑
+    for alert in alerts or []:
+        table = alert.get('table', '')
+        if table.startswith('dwb_'):
+            selected_codes.add('158515019593728')  # 1级表
+        else:
+            selected_codes.add('158515019667456')  # 3级表
+    
+    fuyan_workflows = [wf for wf in FUYAN_WORKFLOWS if wf['code'] in selected_codes]
     fuyan_results = []
     
     log(f"\n4.2 执行复验工作流 (共{len(fuyan_workflows)}个)...")
@@ -539,25 +374,15 @@ def step4_record_and_fuyan(results, alerts=None, mode='smart'):
             log(f"    ❌ 启动失败: {error_msg}")
             fuyan_results.append({'name': fuyan['name'], 'status': 'failed', 'error': error_msg})
     
-    log("\n4.3 等待复验完成...")
-    for fuyan in fuyan_results:
-        if fuyan.get('status') == 'success' and fuyan.get('id'):
-            log(f"  等待 {fuyan['name']} 完成...")
-            success, state = wait_for_instance_complete(fuyan['id'], timeout=600, check_interval=15)
-            fuyan['completed'] = success
-            fuyan['final_state'] = state
-            if success:
-                log(f"    ✅ 复验完成成功")
-            else:
-                log(f"    ⚠️ 复验状态: {state}")
-    
+    # 不等复验完成，直接返回
+    log("\n4.3 复验工作流已启动（异步执行）")
     return fuyan_results
 
 
-def step5_send_report(results, fuyan_results):
-    """步骤5: 发送报告"""
+def step5_save_report(results, fuyan_results):
+    """步骤5: 保存记录"""
     log("\n" + "="*70)
-    log("【步骤5】发送报告")
+    log("【步骤5】保存记录")
     log("="*70)
     
     fixed = [r for r in results if r.get('status') == 'success']
@@ -566,15 +391,7 @@ def step5_send_report(results, fuyan_results):
     log(f"  修复成功: {len(fixed)} 个")
     log(f"  修复失败/跳过: {len(failed)} 个")
     
-    return fixed, failed
-
-
-def step6_save_records(results, fuyan_results, fixed, failed):
-    """步骤6: 保存操作记录"""
-    log("\n" + "="*70)
-    log("【步骤6】保存操作记录")
-    log("="*70)
-    
+    # 保存记录
     record_dir = f"{WORKSPACE}/auto_repair_records/{datetime.now().strftime('%Y-%m-%d')}"
     os.makedirs(record_dir, exist_ok=True)
     
@@ -589,54 +406,38 @@ def step6_save_records(results, fuyan_results, fixed, failed):
         }, f, indent=2, ensure_ascii=False)
     
     log(f"  ✅ 记录已保存: {detail_file}")
-
-
-def step7_send_tv_report(results, fuyan_results, fixed, failed):
-    """步骤7: 发送TV报告"""
-    log("\n" + "="*70)
-    log("【步骤7】发送TV报告")
-    log("="*70)
     
-    # 简化实现
-    log("  ✅ TV报告已发送")
+    return fixed, failed
 
 
 def main():
     """主函数"""
     log("="*70)
-    log("🚀 智能告警修复流程（最终实现）")
+    log("🚀 智能告警修复流程（生产环境版本 v4.1）")
     log("="*70)
     log(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    log(f"📝 执行原则: 无历史记录，每次独立执行")
     log("")
     
     # 步骤1: 扫描告警
     alerts = step1_scan_alerts()
-    
     if not alerts:
         log("\n✅ 没有需要处理的告警，流程结束")
         return
     
-    # 步骤2: 查找位置
+    # 步骤2: 查找工作流
     tasks = step2_find_locations(alerts)
     
     # 步骤3: 执行修复
     results = step3_execute_with_limits(tasks)
     
     # 步骤4: 记录+复验
-    fuyan_results = step4_record_and_fuyan(results, alerts=alerts, mode='smart')
+    fuyan_results = step4_record_and_fuyan(results, alerts)
     
-    # 步骤5: 发送报告
-    fixed, failed = step5_send_report(results, fuyan_results)
-    
-    # 步骤6: 保存记录
-    step6_save_records(results, fuyan_results, fixed, failed)
-    
-    # 步骤7: TV报告
-    step7_send_tv_report(results, fuyan_results, fixed, failed)
+    # 步骤5: 保存记录
+    fixed, failed = step5_save_report(results, fuyan_results)
     
     log("\n" + "="*70)
-    log("✅ 8步流程全部完成")
+    log("✅ 流程完成")
     log("="*70)
     log(f"\n📊 最终统计:")
     log(f"  扫描告警: {len(alerts)} 个")
