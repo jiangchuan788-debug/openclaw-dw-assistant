@@ -24,7 +24,7 @@ WORKSPACE = '/home/node/.openclaw/workspace'
 DS_BASE = 'http://172.20.0.235:12345/dolphinscheduler'
 PROJECT_CODE = '158514956085248'
 FUYAN_PROJECT_CODE = '158515019231232'
-DS_TOKEN = os.environ.get('DS_TOKEN', '')
+DS_TOKEN = os.environ.get('DS_TOKEN', '72b6ff29a6484039a1ddd3f303973505')
 
 # 复验工作流
 FUYAN_WORKFLOWS = [
@@ -40,10 +40,11 @@ def log(msg):
 
 
 def ds_api_get(endpoint):
-    """DS API GET 请求"""
+    """DS API GET 请求 (DS 3.3.0)"""
     url = f"{DS_BASE}{endpoint}"
     req = urllib.request.Request(url)
     req.add_header('token', DS_TOKEN)
+    req.add_header('Accept', 'application/json, text/plain, */*')
     try:
         with urllib.request.urlopen(req, timeout=15) as response:
             result = json.loads(response.read().decode('utf-8'))
@@ -53,7 +54,7 @@ def ds_api_get(endpoint):
 
 
 def ds_api_post(endpoint, data):
-    """DS API POST 请求 - form-data格式"""
+    """DS API POST 请求 - form-data格式 (DS 3.3.0)"""
     url = f"{DS_BASE}{endpoint}"
     encoded_data = urlencode(data).encode('utf-8')
     req = urllib.request.Request(
@@ -62,6 +63,7 @@ def ds_api_post(endpoint, data):
         method='POST'
     )
     req.add_header('token', DS_TOKEN)
+    req.add_header('Accept', 'application/json, text/plain, */*')
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode('utf-8'))
@@ -142,8 +144,8 @@ def step1_scan_alerts():
 
 
 def search_table_in_workflows(table_name):
-    """在所有工作流中搜索表名"""
-    success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/process-definition?pageNo=1&pageSize=100")
+    """在所有工作流中搜索表名 (DS 3.3.0: workflow-definition)"""
+    success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-definition?pageNo=1&pageSize=100")
     if not success:
         return None
 
@@ -153,8 +155,8 @@ def search_table_in_workflows(table_name):
         process_code = wf.get('code')
         process_name = wf.get('name', '')
 
-        # 获取工作流详情
-        s, detail, m = ds_api_get(f"/projects/{PROJECT_CODE}/process-definition/{process_code}")
+        # 获取工作流详情 (DS 3.3.0: workflow-definition)
+        s, detail, m = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-definition/{process_code}")
         if not s:
             continue
 
@@ -241,8 +243,8 @@ def start_task_only(workflow_code, task_code, dt):
 
 
 def get_instance_status(instance_id):
-    """查询工作流实例状态"""
-    endpoint = f"/projects/{PROJECT_CODE}/process-instances/{instance_id}"
+    """查询工作流实例状态 (DS 3.3.0: workflow-instances)"""
+    endpoint = f"/projects/{PROJECT_CODE}/workflow-instances/{instance_id}"
     success, data, msg = ds_api_get(endpoint)
     if success and data:
         state = data.get('state', 'UNKNOWN')
