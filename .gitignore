@@ -1,0 +1,46 @@
+# .gitignore - 忽略不需要提交的文件
+
+# Python缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 临时文件和日志
+*.log
+*.tmp
+*.bak
+
+# 敏感信息
+*.key
+*.pem
+*.env
+
+# 不需要提交的记录文件（保留目录结构）
+auto_repair_records/*.json
+auto_repair_records/*/
+!auto_repair_records/.gitkeep
+
+# 临时下载的库
+pymysql/
+
+# 测试文件
+test_*.py
+*_test.py

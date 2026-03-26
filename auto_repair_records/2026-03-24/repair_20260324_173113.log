@@ -1,8 +1,0 @@
-[17:31:13] [INFO] ================================================================================
-[17:31:18] [INFO] 🚀 智能告警修复系统 v2.0 启动
-[17:31:23] [INFO] ================================================================================
-[17:31:28] [INFO] 
-【步骤1】扫描数据库告警
-[17:31:33] [INFO] 🔍 扫描最近24小时的告警...
-[17:32:08] [ERROR] ❌ 扫描失败: Command '['node', '-e', "\nconst mysql = require('/tmp/node_modules/mysql2/promise');\nasync function query() {\n    const conn = await mysql.createConnection({\n        host: '172.20.0.235', port: 13306,\n        user: 'e_ds', password: 'hAN0Hax1lop',\n        database: 'wattrel', charset: 'utf8mb4'\n    });\n    const [rows] = await conn.execute(`\n        SELECT id, content, type, level, created_at, status\n        FROM wattrel_quality_alert\n        WHERE created_at >= ?\n          AND status = 0\n          AND content NOT LIKE '%已恢复%'\n        ORDER BY level ASC, created_at DESC\n    `, ['2026-03-23 17:31:38']);\n    await conn.end();\n    console.log(JSON.stringify(rows));\n}\nquery().catch(e => console.error(e));\n"]' timed out after 30 seconds
-[17:32:13] [INFO] ✅ 没有需要修复的告警

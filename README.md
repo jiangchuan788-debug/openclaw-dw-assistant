@@ -1,91 +1,132 @@
-# OpenClaw 数仓智能助手
+# 智能告警修复系统
 
-> OpenClaw + DolphinScheduler + 告警自动化 = 数据工程智能化
+**版本**: v2.6  
+**日期**: 2026-03-26
 
 ---
 
-## 📁 项目结构
+## 📋 系统概览
+
+本系统用于自动检测和修复 DolphinScheduler 数据仓库中的数据质量告警，包含两大核心模块：
+
+| 模块 | 功能 | 执行频率 |
+|------|------|----------|
+| **智能告警修复** | 扫描告警、修复数据、执行复验 | 每日 06:40 |
+| **异常调度检测** | 检测并停止异常调度实例 | 每半小时 |
+
+---
+
+## 📁 目录结构
 
 ```
-openclaw-dw-assistant/
-├── docs/                           # 文档
-│   └── dolphinscheduler-api-guide.md   # DS API 完整指南
+.
+├── README.md                       # 本文件
+├── WORKFLOW_DOCUMENTATION.md       # 完整流程文档
+├── EXECUTION_GUIDE.md              # 执行指南
+├── STOP_INSTANCE_API.md            # 停止实例API文档
 │
-├── dolphinscheduler/               # DolphinScheduler 调度系统
+├── repair_strict_7step.py          # 主修复脚本（8步流程）⭐
+├── auto_stop_abnormal_schedule.py  # 异常调度检测脚本⭐
+├── send_tv_report.py               # TV报告发送
+├── config.py                       # 配置管理
+├── auto_load_env.py                # 环境变量自动加载
+│
+├── alert/                          # 告警处理模块
 │   ├── README.md
-│   ├── dolphinscheduler_api.py     # 主 API 脚本
-│   ├── dolphinscheduler-workflows.csv
-│   └── examples/                   # 使用示例
+│   ├── alert_query_optimized.py    # 告警查询
+│   ├── send_alert.py               # 告警发送
+│   └── db_config.py                # 数据库配置
 │
-├── alert/                          # 告警自动化系统
+├── dolphinscheduler/               # DS操作模块
 │   ├── README.md
-│   ├── alert_bridge.py             # 告警桥接主脚本
-│   ├── send_alert.py
-│   ├── check_alerts.py
-│   └── examples/                   # 告警示例
+│   ├── check_running.py            # 检查工作流状态
+│   ├── search_table.py             # 查找表位置
+│   ├── run_fuyan_workflows.py      # 执行复验
+│   └── schedules_export.csv        # 调度配置
 │
-├── utils/                          # 工具脚本
-│   └── daily_summary.py            # 每日总结生成
-│
-└── memory/                         # OpenClaw 记忆文件
+├── auto_repair_records/            # 操作记录
+├── cron_jobs/                      # 定时任务导出
+└── docs/                           # 其他文档
 ```
 
 ---
 
 ## 🚀 快速开始
 
-### 1. DolphinScheduler 调度
-
-```python
-from dolphinscheduler.dolphinscheduler_api import start_workflow_simple
-
-result = start_workflow_simple(
-    project_code="159737550740160",
-    process_code="168243093291713",
-    dt="2026-03-17"
-)
-print(f"实例 ID: {result['instance_id']}")
-```
-
-[完整指南 →](docs/dolphinscheduler-api-guide.md)
-
-### 2. 告警自动化
+### 1. 环境准备
 
 ```bash
-# 启动告警监控
-python alert/alert_bridge.py --once
-
-# 每小时定时检查
-python alert/alert_bridge_hourly.ps1
+# 设置环境变量
+export DS_TOKEN='your_token'
+export DB_PASSWORD='your_password'
 ```
 
-[告警系统说明 →](alert/README.md)
+### 2. 手动执行告警修复
+
+```bash
+python3 repair_strict_7step.py
+```
+
+### 3. 手动执行异常调度检测
+
+```bash
+python3 auto_stop_abnormal_schedule.py
+```
 
 ---
 
-## 📚 文档导航
+## 📝 核心脚本说明
 
-| 文档 | 说明 |
-|------|------|
-| [DS API 指南](docs/dolphinscheduler-api-guide.md) | DolphinScheduler API 完整使用指南 |
-| [DS 模块说明](dolphinscheduler/README.md) | 调度系统详细说明 |
-| [告警模块说明](alert/README.md) | 告警自动化系统说明 |
+### repair_strict_7step.py
 
----
+**8步流程：**
+1. 扫描告警表
+2. 查找工作流位置
+3. 检查工作流状态
+4. 执行修复（TASK_ONLY模式）
+5. 记录+复验+再次检查
+6. 发送钉钉报告
+7. 发送TV报告
+8. 保存操作记录
 
-## 🔧 环境要求
-
-- Python 3.8+
-- DolphinScheduler 3.x
-- OpenClaw (本地部署)
-- MySQL (告警数据库)
-
----
-
-## 📞 联系
-
-作者：陈江川 (江川)
+**复验智能选择：**
+- `dwb_`开头表 → 1级表复验
+- 其他表 → 3级表复验
+- 每日全级别必跑
 
 ---
 
-**最后更新：** 2026-03-23
+## ⏰ 定时任务
+
+| 任务 | 频率 | Cron表达式 |
+|------|------|-----------|
+| 智能告警修复 | 每日 06:40 | `40 6 * * *` |
+| 异常调度检测 | 每半小时 | `0,30 * * * *` |
+
+---
+
+## 📚 详细文档
+
+- [完整流程文档](WORKFLOW_DOCUMENTATION.md)
+- [执行指南](EXECUTION_GUIDE.md)
+- [停止实例API](STOP_INSTANCE_API.md)
+- [告警模块](alert/README.md)
+- [DS模块](dolphinscheduler/README.md)
+
+---
+
+## 🔧 配置说明
+
+所有敏感配置通过环境变量读取：
+- `DS_TOKEN`: DolphinScheduler Token
+- `DB_PASSWORD`: 数据库密码
+- `DB_HOST`: 数据库主机
+- `DB_PORT`: 数据库端口
+- `DB_USER`: 数据库用户
+- `DB_NAME`: 数据库名称
+
+配置位置：`~/.bashrc`（永久）或通过 `auto_load_env.py` 自动加载
+
+---
+
+**GitHub**: https://github.com/jiangchuan788-debug/openclaw-dw-assistant

@@ -1,5 +1,0 @@
-【任务名称】数据质量校验任务_4355
-【告警时间】Mon Mar 23 2026 05:30:26 GMT+0800 (China Standard Time)
-【告警级别】P1
-【告警内容】ods_capital_bi_oversea_account_balance_report ods_capital_bi_oversea_account_balance_report_amt(bi海外科目余额报表)不一致
-【执行语句】SELECT bi_oversea_account_balance_report_business_country AS country, sum(bi_oversea_account_balance_report_amount) amt FROM cw_catalog.capital.bi_oversea_account_balance_report GROUP BY 1 ORDER BY 1;  SELECT bi_oversea_account_balance_report_business_country AS country, sum(bi_oversea_account_balance_report_amount) amt FROM ods_security.ods_capital_bi_oversea_account_balance_report GROUP BY 1 ORDER BY 1;
