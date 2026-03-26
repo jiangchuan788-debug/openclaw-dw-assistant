@@ -78,10 +78,8 @@ def select_fuyan_by_alerts(alerts):
     根据告警信息智能选择需要执行的复验工作流
     
     规则:
-    - 有1级表告警 → 跑 1级表复验 + 每日全级别
-    - 有2级表告警 → 跑 2级表复验 + 每日全级别
-    - 有3级表告警 → 跑 3级表复验 + 每日全级别
-    - 有全级别告警 → 只跑 每日全级别
+    - 表名以 dwb_ 开头 → 跑 1级表复验 + 每日全级别
+    - 其他表(dwd_/ads_/ods_等) → 跑 3级表复验 + 每日全级别
     """
     selected_codes = set()
     
@@ -89,25 +87,47 @@ def select_fuyan_by_alerts(alerts):
     selected_codes.add('158515019703296')
     
     for alert in alerts:
-        table = alert.get('table', '')
-        level = alert.get('level', '')
+        # 从content中提取表名（第一个词）
+        content = alert.get('content', '')
+        table = ''
         
-        # 根据表名或级别判断
-        if 'dwd' in table.lower() or level in ['1', 'P1', 'L1']:
-            # DWD层或1级表
-            selected_codes.add('158515019593728')  # 1级表复验
-        elif 'dwb' in table.lower() or level in ['2', 'P2', 'L2']:
-            # DWB层或2级表
-            selected_codes.add('158515019630592')  # 2级表复验
-        elif 'ads' in table.lower() or level in ['3', 'P3', 'L3']:
-            # ADS层或3级表
-            selected_codes.add('158515019667456')  # 3级表复验
+        # 尝试提取表名
+        if content:
+            # 去掉"已恢复 "前缀
+            if content.startswith('已恢复 '):
+                content = content[4:]
+            # 取第一个词作为表名
+            table = content.split()[0] if content else ''
+        
+        # 如果alert中有table字段，优先使用
+        if alert.get('table'):
+            table = alert.get('table')
+        
+        log(f"  分析告警表: {table}")
+        
+        # 判断规则
+        if table.startswith('dwb_'):
+            # DWB层 → 1级表复验
+            selected_codes.add('158515019593728')
+            log(f"    → 匹配: 1级表复验 (dwb_开头)")
+        elif table.startswith(('dwd_', 'ads_', 'ods_', 'dws_', 'dim_')):
+            # 其他层 → 3级表复验
+            selected_codes.add('158515019667456')
+            log(f"    → 匹配: 3级表复验 (非dwb_开头)")
+        else:
+            # 未知表，默认跑3级
+            selected_codes.add('158515019667456')
+            log(f"    → 匹配: 3级表复验 (默认)")
     
     # 根据选中的code返回对应的工作流配置
     selected_workflows = []
     for wf in FUYAN_WORKFLOWS_ALL:
         if wf['code'] in selected_codes:
             selected_workflows.append(wf)
+    
+    log(f"\n  共选中 {len(selected_workflows)} 个复验工作流:")
+    for wf in selected_workflows:
+        log(f"    - {wf['name']}")
     
     return selected_workflows
 
