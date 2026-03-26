@@ -38,7 +38,7 @@ def fetch_all_workflows():
     page_size = 50
     
     while True:
-        url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/workflow-definition"
+        url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-definition"
         params = f"?pageNo={page_no}&pageSize={page_size}"
         
         req = urllib.request.Request(url + params)
@@ -76,7 +76,7 @@ def get_workflow_detail(process_code):
     Returns:
         dict: 工作流详情，包含 taskDefinitionList
     """
-    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/workflow-definition/{process_code}"
+    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-definition/{process_code}"
     
     req = urllib.request.Request(url)
     req.add_header('token', DS_CONFIG['token'])

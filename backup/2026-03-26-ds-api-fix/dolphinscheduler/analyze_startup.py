@@ -45,8 +45,8 @@ def fetch_recent_instances(days=7, limit=100):
     Returns:
         list: 实例列表
     """
-    # 查询成功的实例（最近完成的） (DS 3.3.0: workflow-instances)
-    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/workflow-instances"
+    # 查询成功的实例（最近完成的）
+    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-instances"
     params = f"?stateType=SUCCESS&pageNo=1&pageSize={limit}"
     
     full_url = url + params
@@ -65,8 +65,8 @@ def fetch_recent_instances(days=7, limit=100):
 
 
 def get_instance_detail(instance_id):
-    """获取实例详情 (DS 3.3.0: workflow-instances)"""
-    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/workflow-instances/{instance_id}"
+    """获取实例详情"""
+    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-instances/{instance_id}"
     
     req = urllib.request.Request(url)
     req.add_header('token', DS_CONFIG['token'])

@@ -42,7 +42,7 @@ def fetch_running_workflows(filter_name=None, limit=20):
     Returns:
         tuple: (success: bool, workflows: list, total: int)
     """
-    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/workflow-instances"
+    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-instances"
     params = f"?stateType=RUNNING_EXECUTION&pageNo=1&pageSize={limit}"
     
     full_url = url + params

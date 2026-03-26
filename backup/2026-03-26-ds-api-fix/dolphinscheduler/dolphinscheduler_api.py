@@ -172,7 +172,7 @@ class DolphinSchedulerClient:
         Returns:
             工作流信息字典
         """
-        url = f"{self.base_url}/projects/{project_code}/workflow-definition/{process_code}"
+        url = f"{self.base_url}/projects/{project_code}/process-definition/{process_code}"
         
         try:
             response = requests.get(url, headers=self.headers, timeout=30)
@@ -208,7 +208,7 @@ class DolphinSchedulerClient:
         Returns:
             工作流列表字典
         """
-        url = f"{self.base_url}/projects/{project_code}/workflow-definition/query-process-definition-list"
+        url = f"{self.base_url}/projects/{project_code}/process-definition/query-process-definition-list"
         
         try:
             response = requests.get(url, headers=self.headers, timeout=30)

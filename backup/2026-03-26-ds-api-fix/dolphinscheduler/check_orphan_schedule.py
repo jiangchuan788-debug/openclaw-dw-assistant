@@ -30,8 +30,8 @@ DS_CONFIG = {
 
 
 def fetch_running_instances():
-    """获取正在运行的工作流实例 (DS 3.3.0: workflow-instances)"""
-    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/workflow-instances"
+    """获取正在运行的工作流实例"""
+    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-instances"
     params = "?stateType=RUNNING_EXECUTION&pageNo=1&pageSize=100"
     
     req = urllib.request.Request(url + params)
@@ -49,8 +49,8 @@ def fetch_running_instances():
 
 
 def get_instance_detail(instance_id):
-    """获取实例详情 (DS 3.3.0: workflow-instances)"""
-    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/workflow-instances/{instance_id}"
+    """获取实例详情"""
+    url = f"{DS_CONFIG['base_url']}/projects/{DS_CONFIG['project_code']}/process-instances/{instance_id}"
     
     req = urllib.request.Request(url)
     req.add_header('token', DS_CONFIG['token'])

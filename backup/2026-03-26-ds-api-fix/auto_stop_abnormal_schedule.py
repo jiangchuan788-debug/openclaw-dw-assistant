@@ -72,8 +72,8 @@ def load_schedules_from_csv(csv_path):
     return schedules
 
 def get_running_instances():
-    """获取运行中的工作流实例 (DS 3.3.0: workflow-instances)"""
-    url = f"{DS_BASE_URL}/projects/{PROJECT_CODE}/workflow-instances?stateType=RUNNING_EXECUTION&pageNo=1&pageSize=100"
+    """获取运行中的工作流实例"""
+    url = f"{DS_BASE_URL}/projects/{PROJECT_CODE}/process-instances?stateType=RUNNING_EXECUTION&pageNo=1&pageSize=100"
     try:
         req = urllib.request.Request(url, headers={'token': DS_TOKEN})
         with urllib.request.urlopen(req, timeout=15) as response:
@@ -85,8 +85,8 @@ def get_running_instances():
     return []
 
 def get_instance_detail(instance_id):
-    """获取实例详情 (DS 3.3.0: workflow-instances)"""
-    url = f"{DS_BASE_URL}/projects/{PROJECT_CODE}/workflow-instances/{instance_id}"
+    """获取实例详情"""
+    url = f"{DS_BASE_URL}/projects/{PROJECT_CODE}/process-instances/{instance_id}"
     try:
         req = urllib.request.Request(url, headers={'token': DS_TOKEN})
         with urllib.request.urlopen(req, timeout=10) as response:

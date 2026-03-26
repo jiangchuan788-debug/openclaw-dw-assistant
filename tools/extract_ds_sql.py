@@ -41,8 +41,8 @@ def ds_api_get(endpoint):
 
 
 def get_project_workflows(project_code):
-    """获取项目下的所有工作流列表"""
-    success, data = ds_api_get(f"/projects/{project_code}/process-definition?pageNo=1&pageSize=100")
+    """获取项目下的所有工作流列表 (DS 3.3.0: workflow-definition)"""
+    success, data = ds_api_get(f"/projects/{project_code}/workflow-definition?pageNo=1&pageSize=100")
     
     if not success:
         print(f"❌ 获取工作流列表失败: {data}")
@@ -54,8 +54,8 @@ def get_project_workflows(project_code):
 
 
 def get_workflow_detail(project_code, workflow_code):
-    """获取工作流详细信息（包含任务定义）"""
-    success, data = ds_api_get(f"/projects/{project_code}/process-definition/{workflow_code}")
+    """获取工作流详细信息（包含任务定义） (DS 3.3.0: workflow-definition)"""
+    success, data = ds_api_get(f"/projects/{project_code}/workflow-definition/{workflow_code}")
     
     if not success:
         print(f"❌ 获取工作流详情失败: {data}")
