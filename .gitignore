@@ -33,17 +33,10 @@ Thumbs.db
 *.pem
 *.env
 
-# 不需要提交的记录文件（保留目录结构）
-auto_repair_records/*.json
-auto_repair_records/*/
-!auto_repair_records/.gitkeep
-
-# 临时下载的库
-pymysql/
-
-# 测试文件
-test_*.py
-*_test.py
+# 运行时数据（保留目录结构）
+data/auto_repair_records/*
+!data/auto_repair_records/.gitkeep
+data/*.json
 
 # SQL 导出目录（临时文件）
 sql_export/
@@ -63,3 +56,10 @@ BOOTSTRAP.md
 
 # 临时检查报告
 schedule_check_report_*.md
+
+# 测试文件
+test_*.py
+*_test.py
+
+# 其他
+EOF

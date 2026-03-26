@@ -1,7 +1,8 @@
 # 智能告警修复系统
 
-**版本**: v2.6  
-**日期**: 2026-03-26
+**版本**: v2.12  
+**日期**: 2026-03-26  
+**作者**: OpenClaw
 
 ---
 
@@ -20,128 +21,141 @@
 
 ```
 .
-├── README.md                       # 本文件
-├── WORKFLOW_DOCUMENTATION.md       # 完整流程文档
-├── EXECUTION_GUIDE.md              # 执行指南
-├── STOP_INSTANCE_API.md            # 停止实例API文档
+├── README.md                    # 本文件 - 项目入口
+├── SYSTEM_MEMORY.md             # 系统记忆摘要 - 关键信息速查
 │
-├── repair_strict_7step.py          # 主修复脚本（8步流程）⭐
-├── auto_stop_abnormal_schedule.py  # 异常调度检测脚本⭐
-├── send_tv_report.py               # TV报告发送
-├── config.py                       # 配置管理
-├── auto_load_env.py                # 环境变量自动加载
+├── config/                      # 配置模块
+│   ├── config.py                # 配置管理
+│   ├── auto_load_env.py         # 环境变量自动加载
+│   └── README.md
 │
-├── alert/                          # 告警处理模块
-│   ├── README.md
-│   ├── alert_query_optimized.py    # 告警查询
-│   ├── send_alert.py               # 告警发送
-│   └── db_config.py                # 数据库配置
+├── core/                        # 核心定时任务 ⭐
+│   ├── auto_stop_abnormal_schedule.py  # 异常调度检测
+│   ├── repair_strict_7step.py          # 智能告警修复
+│   ├── send_tv_report.py               # TV报告发送
+│   └── README.md
 │
-├── dolphinscheduler/               # DS操作模块
-│   ├── README.md
-│   ├── check_running.py            # 检查工作流状态
-│   ├── search_table.py             # 查找表位置
-│   ├── run_fuyan_workflows.py      # 执行复验
-│   └── schedules_export.csv        # 调度配置
+├── modules/                     # 功能模块
+│   ├── alert/                   # 告警处理模块
+│   │   ├── alert_query_optimized.py
+│   │   ├── send_alert.py
+│   │   ├── db_config.py
+│   │   └── README.md
+│   │
+│   └── dolphinscheduler/        # DS操作模块
+│       ├── check_running.py
+│       ├── search_table.py
+│       ├── run_fuyan_workflows.py
+│       ├── schedules_export.csv
+│       └── README.md
 │
-├── auto_repair_records/            # 操作记录
-├── cron_jobs/                      # 定时任务导出
-└── docs/                           # 其他文档
+├── tools/                       # 工具脚本
+│   ├── extract_ds_sql.py        # SQL提取工具
+│   ├── task_execution_checker.py # 执行检查工具
+│   └── README.md
+│
+├── docs/                        # 文档
+│   ├── WORKFLOW_DOCUMENTATION.md       # 完整流程文档
+│   ├── TASK_EXECUTION_WORKFLOW.md      # 执行流程详解
+│   ├── EXECUTION_GUIDE.md              # 执行指南
+│   ├── STOP_INSTANCE_API.md            # API文档
+│   └── README.md
+│
+├── templates/                   # 配置文件模板
+│   ├── AGENTS.md.template
+│   ├── SOUL.md.template
+│   ├── USER.md.template
+│   ├── TOOLS.md.template
+│   ├── IDENTITY.md.template
+│   ├── BOOTSTRAP.md.template
+│   └── README.md
+│
+├── data/                        # 数据文件
+│   ├── cron_jobs/               # 定时任务记录
+│   ├── auto_repair_records/     # 操作记录
+│   └── README.md
+│
+└── memory/                      # 每日记忆记录
 ```
 
 ---
 
 ## 🚀 快速开始
 
-### 1. 环境准备
+### 环境准备
 
 ```bash
-# 设置环境变量
+# 设置环境变量（在 ~/.bashrc 中）
 export DS_TOKEN='your_token'
 export DB_PASSWORD='your_password'
 ```
 
-### 2. 首次部署（复现指南）
+### 首次部署（复现指南）
 
-如果是新的 OpenClaw 实例，请按照以下步骤初始化：
-
-#### 步骤1: 克隆代码
 ```bash
+# 1. 克隆代码
 git clone https://github.com/jiangchuan788-debug/openclaw-dw-assistant.git
 cd openclaw-dw-assistant
-```
 
-#### 步骤2: 初始化配置
-```bash
-# 复制模板文件
-cp AGENTS.md.template AGENTS.md
-cp SOUL.md.template SOUL.md
-cp USER.md.template USER.md
-cp TOOLS.md.template TOOLS.md
-cp IDENTITY.md.template IDENTITY.md
+# 2. 初始化配置（复制模板）
+cp templates/AGENTS.md.template AGENTS.md
+cp templates/SOUL.md.template SOUL.md
+cp templates/USER.md.template USER.md
+cp templates/TOOLS.md.template TOOLS.md
+cp templates/IDENTITY.md.template IDENTITY.md
 
-# 编辑这些文件，填写你的配置
-# 然后删除模板文件（可选）
-rm *.template
-```
+# 编辑这些文件，填写你的配置...
 
-#### 步骤3: 配置环境变量
-编辑 `~/.bashrc`，添加：
-```bash
-export DS_TOKEN='your_ds_token'
-export DB_PASSWORD='your_db_password'
-export DB_HOST='172.20.0.235'
-export DB_PORT='13306'
-export DB_USER='e_ds'
-export DB_NAME='wattrel'
-```
-
-然后执行：
-```bash
+# 3. 配置环境变量
 source ~/.bashrc
+
+# 4. 验证配置
+python3 tools/task_execution_checker.py --task all
+
+# 5. 测试执行
+python3 core/auto_stop_abnormal_schedule.py
+python3 core/repair_strict_7step.py
 ```
 
-#### 步骤4: 验证配置
-```bash
-python3 task_execution_checker.py --task all
-```
-
-#### 步骤5: 测试执行
-```bash
-# 测试异常调度检测
-python3 auto_stop_abnormal_schedule.py
-
-# 测试智能告警修复
-python3 repair_strict_7step.py
-```
-
-### 3. 手动执行告警修复
+### 手动执行
 
 ```bash
-python3 repair_strict_7step.py
-```
+# 异常调度检测
+python3 core/auto_stop_abnormal_schedule.py
 
-### 4. 手动执行异常调度检测
-
-```bash
-python3 auto_stop_abnormal_schedule.py
+# 智能告警修复
+python3 core/repair_strict_7step.py
 ```
 
 ---
 
 ## 📝 核心脚本说明
 
-### repair_strict_7step.py
+### 1. 异常调度检测 (`core/auto_stop_abnormal_schedule.py`)
 
-**8步流程：**
-1. 扫描告警表
+**8步执行流程：**
+1. 加载调度配置
+2. 获取运行中实例
+3. 异常检测
+4. 自动停止异常实例
+5. TV通知（有条件）
+6. 钉钉报告（已禁用）
+7. 保存检测记录
+8. 执行完成
+
+**通知策略：** 只有发现异常时才发送TV通知，正常情况下静默
+
+### 2. 智能告警修复 (`core/repair_strict_7step.py`)
+
+**8步执行流程：**
+1. 扫描告警（单次执行内去重）
 2. 查找工作流位置
-3. 检查工作流状态
-4. 执行修复（TASK_ONLY模式）
-5. 记录+复验+再次检查
-6. 发送钉钉报告
-7. 发送TV报告
-8. 保存操作记录
+3. 执行修复（带限制检查）
+4. 记录+复验（智能选择）
+5. 钉钉报告（已禁用）
+6. 保存操作记录
+7. TV报告
+8. 执行完成
 
 **复验智能选择：**
 - `dwb_`开头表 → 1级表复验
@@ -150,37 +164,74 @@ python3 auto_stop_abnormal_schedule.py
 
 ---
 
-## ⏰ 定时任务
+## 🔧 常用工具
 
-| 任务 | 频率 | Cron表达式 |
-|------|------|-----------|
-| 智能告警修复 | 每日 06:40 | `40 6 * * *` |
-| 异常调度检测 | 每半小时 | `0,30 * * * *` |
+### 提取 SQL 代码
+
+```bash
+python3 tools/extract_ds_sql.py <project_code> --name <project_name>
+
+# 示例
+python3 tools/extract_ds_sql.py 159737550740160 --name okr_ads
+```
+
+### 检查任务环境
+
+```bash
+python3 tools/task_execution_checker.py --task all
+```
 
 ---
 
 ## 📚 详细文档
 
-- [完整流程文档](WORKFLOW_DOCUMENTATION.md)
-- [执行指南](EXECUTION_GUIDE.md)
-- [停止实例API](STOP_INSTANCE_API.md)
-- [告警模块](alert/README.md)
-- [DS模块](dolphinscheduler/README.md)
+| 文档 | 用途 | 位置 |
+|------|------|------|
+| **SYSTEM_MEMORY.md** | 系统记忆摘要 - 关键信息速查 | 根目录 |
+| **WORKFLOW_DOCUMENTATION.md** | 完整系统流程文档 | docs/ |
+| **TASK_EXECUTION_WORKFLOW.md** | 定时任务执行流程详解 | docs/ |
+| **EXECUTION_GUIDE.md** | 执行指南 | docs/ |
+| **STOP_INSTANCE_API.md** | 停止实例API文档 | docs/ |
 
 ---
 
-## 🔧 配置说明
+## 🔑 关键配置
 
-所有敏感配置通过环境变量读取：
-- `DS_TOKEN`: DolphinScheduler Token
-- `DB_PASSWORD`: 数据库密码
-- `DB_HOST`: 数据库主机
-- `DB_PORT`: 数据库端口
-- `DB_USER`: 数据库用户
-- `DB_NAME`: 数据库名称
+### 环境变量
 
-配置位置：`~/.bashrc`（永久）或通过 `auto_load_env.py` 自动加载
+```bash
+DS_TOKEN              # DolphinScheduler Token
+DB_PASSWORD           # 数据库密码
+DB_HOST=172.20.0.235  # 数据库主机
+DB_PORT=13306         # 数据库端口
+DB_USER=e_ds          # 数据库用户
+DB_NAME=wattrel       # 数据库名称
+```
+
+### 项目代码
+
+| 项目名称 | Code |
+|---------|------|
+| 国内数仓-工作流 | 158514956085248 |
+| 国内数仓-质量校验 | 158515019231232 |
+| okr_ads | 159737550740160 |
 
 ---
 
-**GitHub**: https://github.com/jiangchuan788-debug/openclaw-dw-assistant
+## ⏰ 定时任务
+
+| 任务 | 频率 | 超时 |
+|------|------|------|
+| 异常调度检测 | 每半小时（00,30分） | 300秒 |
+| 智能告警修复 | 每日 06:40 | 1800秒 |
+
+---
+
+## 📞 联系信息
+
+- **GitHub**: https://github.com/jiangchuan788-debug/openclaw-dw-assistant
+- **用途**: 数据仓库监控和告警自动修复
+
+---
+
+**更多信息请查看 [docs/](./docs/) 目录下的文档。**
