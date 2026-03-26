@@ -222,23 +222,26 @@ def step2_find_locations(alerts):
 
 
 def start_task_only(workflow_code, task_code, dt):
-    """启动特定任务（TASK_ONLY模式）"""
+    """启动特定任务（TASK_ONLY模式） (DS 3.3.0)"""
+    import time
+    schedule_time = time.strftime('%Y-%m-%d %H:%M:%S')
+
     data = {
-        'processDefinitionCode': workflow_code,
+        'workflowDefinitionCode': workflow_code,
         'startNodeList': task_code,
         'taskDependType': 'TASK_ONLY',
         'failureStrategy': 'CONTINUE',
         'warningType': 'NONE',
         'warningGroupId': 0,
         'execType': 'START_PROCESS',
-        'startParams': json.dumps({'global': [{'prop': 'dt', 'value': dt}]}),
+        'startParams': f'[{{"prop":"dt","value":"{dt}"}}]',
         'environmentCode': 154818922491872,
         'tenantCode': 'dolphinscheduler',
         'dryRun': 0,
-        'scheduleTime': ''
+        'scheduleTime': schedule_time
     }
 
-    success, result, msg = ds_api_post(f"/projects/{PROJECT_CODE}/executors/start-process-instance", data)
+    success, result, msg = ds_api_post(f"/projects/{PROJECT_CODE}/executors/start-workflow-instance", data)
     return success, result
 
 
@@ -394,9 +397,12 @@ def step3_execute_with_limits(tasks):
 
 
 def start_fuyan_workflow(workflow_code):
-    """启动复验工作流"""
+    """启动复验工作流 (DS 3.3.0)"""
+    import time
+    schedule_time = time.strftime('%Y-%m-%d %H:%M:%S')
+    
     data = {
-        'processDefinitionCode': workflow_code,
+        'workflowDefinitionCode': workflow_code,
         'failureStrategy': 'CONTINUE',
         'warningType': 'NONE',
         'warningGroupId': 0,
@@ -404,10 +410,10 @@ def start_fuyan_workflow(workflow_code):
         'environmentCode': 154818922491872,
         'tenantCode': 'dolphinscheduler',
         'dryRun': 0,
-        'scheduleTime': ''
+        'scheduleTime': schedule_time
     }
-
-    success, result, msg = ds_api_post(f"/projects/{FUYAN_PROJECT_CODE}/executors/start-process-instance", data)
+    
+    success, result, msg = ds_api_post(f"/projects/{FUYAN_PROJECT_CODE}/executors/start-workflow-instance", data)
     return success, result
 
 
