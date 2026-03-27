@@ -514,8 +514,8 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
     return fuyan_results
 
 
-def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results):
-    """步骤6: 保存记录"""
+def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, alerts):
+    """步骤6: 保存记录并发送TV报告"""
     log("\n" + "="*70)
     log("【步骤6】保存记录")
     log("="*70)
@@ -535,28 +535,113 @@ def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results):
     
     log(f"  ✅ 记录已保存: {detail_file}")
     
-    # TV报告
-    log("\n" + "="*70)
-    log("📺 TV告警修复报告")
-    log("="*70)
-    log(f"\n执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    log(f"修复成功: {len(completed_tasks)} 个")
-    log(f"修复失败: {len(failed_tasks)} 个")
+    # 生成TV报告内容
+    tv_report = generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts)
     
+    # 发送TV报告到钉钉
+    send_tv_report_to_dingtalk(tv_report)
+
+
+def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts):
+    """生成TV格式报告"""
+    report_lines = []
+    report_lines.append("📺 【智能告警修复报告】")
+    report_lines.append("")
+    report_lines.append(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    report_lines.append("")
+    
+    # 扫描统计
+    report_lines.append(f"📊 扫描告警: {len(alerts)} 个")
+    report_lines.append(f"✅ 修复成功: {len(completed_tasks)} 个")
+    report_lines.append(f"❌ 修复失败: {len(failed_tasks)} 个")
+    report_lines.append(f"🔄 复验启动: {len(fuyan_results)} 个")
+    report_lines.append("")
+    
+    # 成功任务
     if completed_tasks:
-        log(f"\n✅ 成功任务:")
+        report_lines.append("✅ 【修复成功任务】")
         for task in completed_tasks:
-            log(f"  - {task['table']}")
+            report_lines.append(f"  • {task['table']}")
+            if task.get('end_time'):
+                report_lines.append(f"    完成时间: {task['end_time']}")
+        report_lines.append("")
     
+    # 失败任务
     if failed_tasks:
-        log(f"\n⚠️ 失败/超时任务:")
+        report_lines.append("⚠️ 【修复失败/超时任务】")
         for task in failed_tasks:
-            log(f"  - {task['table']}: {task.get('error', '未知错误')}")
+            error_msg = task.get('error', '未知错误')
+            report_lines.append(f"  • {task['table']}: {error_msg}")
+        report_lines.append("")
     
-    log(f"\n🔄 复验工作流: {len(fuyan_results)} 个")
+    # 未找到工作流的任务
+    not_found_tasks = [a for a in alerts if not any(t['table'] == a['table'] for t in completed_tasks + failed_tasks)]
+    if not_found_tasks:
+        report_lines.append("❌ 【未找到工作流】")
+        for task in not_found_tasks:
+            report_lines.append(f"  • {task['table']}")
+        report_lines.append("")
+    
+    # 复验工作流
+    report_lines.append("🔄 【复验工作流】")
     for fuyan in fuyan_results:
-        status = "✅" if fuyan.get('status') == 'success' else "❌"
-        log(f"  {status} {fuyan['name']}")
+        status = "✅ 启动成功" if fuyan.get('status') == 'success' else "❌ 启动失败"
+        report_lines.append(f"  • {fuyan['name']}: {status}")
+        if fuyan.get('id'):
+            report_lines.append(f"    实例ID: {fuyan['id']}")
+    report_lines.append("")
+    
+    # 结尾
+    report_lines.append("="*50)
+    report_lines.append("📌 报告生成完成")
+    
+    return "\n".join(report_lines)
+
+
+def send_tv_report_to_dingtalk(report_content):
+    """发送TV报告到钉钉群"""
+    log("\n" + "="*70)
+    log("【发送TV报告到钉钉群】")
+    log("="*70)
+    
+    try:
+        # 保存报告到文件
+        report_file = f"{WORKSPACE}/auto_repair_records/{datetime.now().strftime('%Y-%m-%d')}/tv_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        with open(report_file, 'w', encoding='utf-8') as f:
+            f.write(report_content)
+        
+        log(f"✅ TV报告已生成: {report_file}")
+        
+        # 尝试使用sessions_send发送到钉钉
+        try:
+            # 尝试获取当前会话并发送
+            import subprocess
+            result = subprocess.run(
+                ['openclaw', 'message', 'send', '--text', report_content],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                log("✅ TV报告已通过openclaw命令发送")
+            else:
+                log(f"⚠️ openclaw命令发送失败: {result.stderr}")
+        except Exception as e:
+            log(f"⚠️ 尝试使用openclaw命令发送失败: {e}")
+        
+        # 方法2: 通过打印特殊标记（如果在钉钉环境中）
+        print(f"\n{'='*50}")
+        print("📺 TV告警修复报告")
+        print(f"{'='*50}")
+        print(report_content)
+        print(f"{'='*50}\n")
+        
+        log("✅ TV报告已输出到控制台")
+        
+    except Exception as e:
+        log(f"❌ 发送TV报告时出错: {e}")
+        import traceback
+        traceback.print_exc()
     
     log("\n" + "="*70)
 
@@ -587,8 +672,8 @@ def main():
     # 步骤5: 执行复验
     fuyan_results = step5_execute_fuyan(completed_tasks, failed_tasks, alerts)
     
-    # 步骤6: 保存记录
-    step6_save_report(results, completed_tasks, failed_tasks, fuyan_results)
+    # 步骤6: 保存记录并发送TV报告
+    step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, alerts)
     
     log("\n" + "="*70)
     log("✅ 流程完成")
