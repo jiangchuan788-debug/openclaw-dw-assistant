@@ -544,6 +544,26 @@ def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, ale
 
 def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts):
     """生成TV格式报告"""
+    
+    # 查询当前剩余未处理告警数量
+    remaining_count = 0
+    try:
+        from alert.db_config import get_db_connection
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT COUNT(*) as cnt
+                FROM wattrel_quality_result
+                WHERE result = 1 AND is_repaired = 0
+                AND created_at >= DATE_SUB(NOW(), INTERVAL 3 DAY)
+            """
+            cursor.execute(sql)
+            result = cursor.fetchone()
+            remaining_count = result['cnt'] if result else 0
+        conn.close()
+    except Exception as e:
+        log(f"  ⚠️ 查询剩余告警数量失败: {e}")
+    
     report_lines = []
     report_lines.append("📺 【智能告警修复报告】")
     report_lines.append("")
@@ -551,10 +571,15 @@ def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts):
     report_lines.append("")
     
     # 扫描统计
-    report_lines.append(f"📊 扫描告警: {len(alerts)} 个")
-    report_lines.append(f"✅ 修复成功: {len(completed_tasks)} 个")
-    report_lines.append(f"❌ 修复失败: {len(failed_tasks)} 个")
-    report_lines.append(f"🔄 复验启动: {len(fuyan_results)} 个")
+    report_lines.append("📊 本次执行统计:")
+    report_lines.append(f"  • 扫描告警: {len(alerts)} 个")
+    report_lines.append(f"  • 修复成功: {len(completed_tasks)} 个")
+    report_lines.append(f"  • 修复失败: {len(failed_tasks)} 个")
+    report_lines.append(f"  • 复验启动: {len(fuyan_results)} 个")
+    report_lines.append("")
+    
+    # 剩余告警
+    report_lines.append(f"📋 当前未处理告警: {remaining_count} 个")
     report_lines.append("")
     
     # 成功任务
@@ -568,32 +593,37 @@ def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts):
     
     # 失败任务
     if failed_tasks:
-        report_lines.append("⚠️ 【修复失败/超时任务】")
+        report_lines.append("❌ 【修复失败/超时任务】")
         for task in failed_tasks:
             error_msg = task.get('error', '未知错误')
-            report_lines.append(f"  • {task['table']}: {error_msg}")
+            report_lines.append(f"  • {task['table']}")
+            report_lines.append(f"    原因: {error_msg}")
         report_lines.append("")
     
     # 未找到工作流的任务
     not_found_tasks = [a for a in alerts if not any(t['table'] == a['table'] for t in completed_tasks + failed_tasks)]
     if not_found_tasks:
-        report_lines.append("❌ 【未找到工作流】")
+        report_lines.append("⚠️ 【未找到工作流(需人工处理)】")
         for task in not_found_tasks:
             report_lines.append(f"  • {task['table']}")
         report_lines.append("")
     
     # 复验工作流
-    report_lines.append("🔄 【复验工作流】")
+    report_lines.append("🔄 【复验工作流状态】")
     for fuyan in fuyan_results:
-        status = "✅ 启动成功" if fuyan.get('status') == 'success' else "❌ 启动失败"
-        report_lines.append(f"  • {fuyan['name']}: {status}")
-        if fuyan.get('id'):
-            report_lines.append(f"    实例ID: {fuyan['id']}")
+        if fuyan.get('status') == 'success':
+            report_lines.append(f"  ✅ {fuyan['name']}")
+            if fuyan.get('id'):
+                report_lines.append(f"     实例ID: {fuyan['id']}")
+        else:
+            report_lines.append(f"  ❌ {fuyan['name']}")
+            if fuyan.get('error'):
+                report_lines.append(f"     错误: {fuyan['error']}")
     report_lines.append("")
     
     # 结尾
-    report_lines.append("="*50)
-    report_lines.append("📌 报告生成完成")
+    report_lines.append("=" * 40)
+    report_lines.append("📌 智能告警修复系统自动生成")
     
     return "\n".join(report_lines)
 
