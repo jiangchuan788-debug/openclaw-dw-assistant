@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-智能告警修复 - v5.1 修复版
-修复问题:
-1. 监控脚本判断逻辑错误
-2. 状态检查输出不完整
-3. 优化轮询间隔为30秒
+智能告警修复 - v5.0 重构版
+- 使用dolphinscheduler/search_table.py的搜索逻辑
+- 每3分钟检查一次状态
+- 任务完成立即执行复验
 
 作者: OpenClaw
 日期: 2026-03-27
@@ -79,7 +78,7 @@ def ds_api_post(endpoint, data):
 def step1_scan_alerts():
     """步骤1: 扫描告警"""
     log("="*70)
-    log("【步骤1】扫描告警")
+    log("【步骤1】扫描告警 - 从 wattrel_quality_result 表")
     log("="*70)
     
     alerts = []
@@ -135,7 +134,7 @@ def step1_scan_alerts():
             table_alerts[table] = alert
     
     unique_alerts = list(table_alerts.values())
-    log(f"📊 去重后: {len(unique_alerts)} 个")
+    log(f"\n📊 扫描结果: {len(unique_alerts)} 个（去重后）")
     for alert in unique_alerts:
         log(f"  ✅ {alert['table']} (dt={alert['dt']})")
     
@@ -143,7 +142,7 @@ def step1_scan_alerts():
 
 
 def step2_search_workflow(table_name):
-    """在工作流中搜索表 (简化版 - 只搜索DWD工作流)"""
+    """步骤2: 在工作流中搜索表 (使用dolphinscheduler/search_table.py的逻辑)"""
     # 获取所有工作流
     success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-definition?pageNo=1&pageSize=100")
     if not success:
@@ -210,11 +209,9 @@ def step2_find_locations(alerts):
     log("="*70)
     
     tasks = []
-    found_count = 0
-    
     for alert in alerts:
         table = alert['table']
-        log(f"🔍 {table}")
+        log(f"  🔍 查找: {table}")
         
         location = step2_search_workflow(table)
         if location:
@@ -227,8 +224,7 @@ def step2_find_locations(alerts):
                 'task_code': location['task_code'],
                 'task_name': location['task_name']
             }
-            log(f"  ✅ {location['workflow_name']} -> {location['task_name']}")
-            found_count += 1
+            log(f"    ✅ 找到: {location['workflow_name']} -> {location['task_name']}")
         else:
             task = {
                 'alert_id': alert['id'],
@@ -239,11 +235,10 @@ def step2_find_locations(alerts):
                 'task_code': '',
                 'task_name': ''
             }
-            log(f"  ❌ 未找到")
+            log(f"    ❌ 未找到")
         
         tasks.append(task)
     
-    log(f"\n📊 找到 {found_count}/{len(alerts)} 个工作流")
     return tasks
 
 
@@ -263,7 +258,7 @@ def step3_start_repair(tasks):
         task_code = task.get('task_code')
         
         if not workflow_code or not task_code:
-            log(f"[{i}/{len(tasks)}] ⏭️ {table} - 未找到工作流")
+            log(f"[{i}/{len(tasks)}] ⏭️ {table} - 未找到工作流，跳过")
             task['status'] = 'skipped_no_workflow'
             results.append(task)
             continue
@@ -318,17 +313,17 @@ def step3_start_repair(tasks):
     return results, running_instances
 
 
-def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
-    """步骤4: 动态监控任务状态（每30秒检查一次）"""
+def step4_wait_and_check(running_instances, poll_interval=180, max_wait=1800):
+    """步骤4: 每3分钟检查一次状态，完成后立即返回"""
     if not running_instances:
         log("\n  没有需要等待的任务")
         return [], []
     
     log("\n" + "="*70)
-    log("【步骤4】动态监控任务状态（每30秒检查）")
+    log("【步骤4】等待修复完成（每3分钟检查一次）")
     log("="*70)
     log(f"  共 {len(running_instances)} 个任务")
-    log(f"  轮询间隔: {poll_interval}秒")
+    log(f"  轮询间隔: {poll_interval}秒 (3分钟)")
     log(f"  最大等待: {max_wait}秒 (30分钟)")
     
     start_time = time.time()
@@ -337,51 +332,35 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
     pending = running_instances.copy()
     
     while pending and (time.time() - start_time) < max_wait:
-        elapsed = int(time.time() - start_time)
-        log(f"\n⏱️  已等待 {elapsed}秒")
+        log(f"\n⏱️  已等待 {int(time.time() - start_time)}秒，检查 {len(pending)} 个任务状态...")
         
         still_pending = []
-        status_changed = False
-        
         for item in pending:
             table = item['table']
             instance_id = item['instance_id']
             
             # 查询实例状态
             success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-instances/{instance_id}")
-            
             if success and data:
                 state = data.get('state', 'UNKNOWN')
+                log(f"  {table}: {state}")
                 
                 if state in ['SUCCESS', 'FINISHED']:
-                    log(f"  ✅ {table}: 完成 ({state})")
+                    log(f"    ✅ {table} 完成")
                     item['task']['final_status'] = 'success'
                     item['task']['end_time'] = data.get('endTime')
                     completed_tasks.append(item['task'])
-                    status_changed = True
                 elif state in ['FAILED', 'KILL', 'STOP']:
-                    log(f"  ❌ {table}: 失败 ({state})")
+                    log(f"    ❌ {table} 失败 ({state})")
                     item['task']['final_status'] = 'failed'
                     item['task']['error'] = f"状态: {state}"
                     failed_tasks.append(item['task'])
-                    status_changed = True
                 else:
-                    # 仍在运行中
-                    log(f"  ⏳ {table}: {state}")
                     still_pending.append(item)
             else:
-                # 查询失败，保留在pending中
-                log(f"  ⚠️  {table}: 查询失败 ({msg})")
                 still_pending.append(item)
         
         pending = still_pending
-        
-        # 如果状态有变化，立即显示当前汇总
-        if status_changed:
-            log(f"\n📊 当前状态汇总:")
-            log(f"  ✅ 成功: {len(completed_tasks)} 个")
-            log(f"  ❌ 失败: {len(failed_tasks)} 个")
-            log(f"  ⏳ 运行中: {len(pending)} 个")
         
         # 如果都完成了，立即退出
         if not pending:
@@ -389,8 +368,9 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
             break
         
         # 等待下一轮
-        log(f"  还有 {len(pending)} 个任务运行中，{poll_interval}秒后再次检查...")
-        time.sleep(poll_interval)
+        if pending:
+            log(f"  还有 {len(pending)} 个任务运行中，{poll_interval}秒后再次检查...")
+            time.sleep(poll_interval)
     
     # 处理超时任务
     if pending:
@@ -400,7 +380,7 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
             item['task']['final_status'] = 'timeout'
             failed_tasks.append(item['task'])
     
-    log(f"\n📊 最终结果:")
+    log(f"\n📊 等待结果:")
     log(f"  ✅ 成功: {len(completed_tasks)} 个")
     log(f"  ❌ 失败/超时: {len(failed_tasks)} 个")
     
@@ -455,8 +435,6 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
         success, result, msg = ds_api_post(f"/projects/{FUYAN_PROJECT_CODE}/executors/start-workflow-instance", data)
         if success:
             instance_id = result.get('data')
-            if isinstance(instance_id, list) and len(instance_id) > 0:
-                instance_id = instance_id[0]
             log(f"    ✅ 启动成功: {instance_id}")
             fuyan_results.append({'name': fuyan['name'], 'id': instance_id, 'status': 'success'})
         else:
@@ -517,7 +495,7 @@ def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results):
 def main():
     """主函数"""
     log("="*70)
-    log("🚀 智能告警修复流程（v5.1 修复版）")
+    log("🚀 智能告警修复流程（v5.0 重构版）")
     log("="*70)
     log(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log("")
@@ -534,7 +512,7 @@ def main():
     # 步骤3: 启动修复
     results, running_instances = step3_start_repair(tasks)
     
-    # 步骤4: 动态监控（每30秒检查一次）
+    # 步骤4: 等待完成（每3分钟检查一次）
     completed_tasks, failed_tasks = step4_wait_and_check(running_instances)
     
     # 步骤5: 执行复验
