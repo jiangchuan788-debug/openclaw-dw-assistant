@@ -144,12 +144,18 @@ def step1_scan_alerts():
 
 
 def search_table_in_workflows(table_name):
-    """在所有工作流中搜索表名 (DS 3.3.0: workflow-definition)"""
+    """在所有工作流中搜索表名 (DS 3.3.0: workflow-definition)
+    
+    修复: 排除维护类任务（补充、删除、清理等）
+    """
     success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-definition?pageNo=1&pageSize=100")
     if not success:
         return None
 
     workflows = data.get('totalList', [])
+    
+    # 维护任务关键词（需要排除）
+    maintenance_keywords = ['补充', '删除', '清理', '修复', '历史', '冗余', '临时', 'test', 'copy']
 
     for wf in workflows:
         process_code = wf.get('code')
@@ -162,6 +168,24 @@ def search_table_in_workflows(table_name):
 
         tasks = detail.get('taskDefinitionList', [])
         for task in tasks:
+            task_name = task.get('name', '')
+            
+            # 排除维护类任务
+            is_maintenance = any(kw in task_name.lower() for kw in maintenance_keywords)
+            if is_maintenance:
+                continue
+            
+            # 优先匹配任务名（去掉dwd_前缀）
+            table_short = table_name.lower().replace('dwd_', '').replace('dwb_', '').replace('ods_', '')
+            if table_short in task_name.lower():
+                return {
+                    'workflow_code': process_code,
+                    'workflow_name': process_name,
+                    'task_code': task.get('code'),
+                    'task_name': task.get('name')
+                }
+            
+            # 其次匹配SQL内容
             task_params = task.get('taskParams', {})
             if isinstance(task_params, str):
                 try:
