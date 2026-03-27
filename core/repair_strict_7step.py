@@ -192,7 +192,7 @@ def step2_search_in_workflow(workflow_code, table_name):
 
 
 def step2_find_locations(alerts):
-    """步骤2: 查找工作流位置 - 只搜索关键工作流"""
+    """步骤2: 查找工作流位置 - 优化版（缓存工作流列表）"""
     log("\n" + "="*70)
     log("【步骤2】查找工作流位置")
     log("="*70)
@@ -209,6 +209,9 @@ def step2_find_locations(alerts):
         ('158514958004224', 'DWS(D-1)'),
     ]
     
+    # 缓存所有工作流列表（只获取一次）
+    all_workflows = None
+    
     tasks = []
     found_count = 0
     
@@ -224,16 +227,27 @@ def step2_find_locations(alerts):
                 location = result
                 break
         
-        # 如果没找到，再搜索所有工作流
+        # 如果没找到，再搜索所有工作流（使用缓存）
         if not location:
-            success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-definition?pageNo=1&pageSize=100")
-            if success:
-                for wf in data.get('totalList', []):
-                    if (wf.get('code'), wf.get('name')) not in priority_workflows:
-                        result = step2_search_in_workflow(wf.get('code'), table)
-                        if result:
-                            location = result
-                            break
+            if all_workflows is None:
+                log(f"  在优先工作流中未找到，获取所有工作流列表...")
+                success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-definition?pageNo=1&pageSize=100")
+                if success:
+                    all_workflows = data.get('totalList', [])
+                    log(f"  获取到 {len(all_workflows)} 个工作流")
+                else:
+                    log(f"  ❌ 获取工作流列表失败: {msg}")
+                    all_workflows = []
+            
+            # 在缓存的工作流中搜索
+            for wf in all_workflows:
+                wf_code = wf.get('code')
+                # 跳过已在priority中搜索过的工作流
+                if wf_code not in [pw[0] for pw in priority_workflows]:
+                    result = step2_search_in_workflow(wf_code, table)
+                    if result:
+                        location = result
+                        break
         
         if location:
             task = {
@@ -338,7 +352,7 @@ def step3_start_repair(tasks):
 
 
 def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
-    """步骤4: 动态监控任务状态（每30秒检查一次）- 修复版"""
+    """步骤4: 动态监控任务状态（每30秒检查一次）- 修复版（增加失败次数限制）"""
     if not running_instances:
         log("\n  没有需要等待的任务")
         return [], []
@@ -355,6 +369,10 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
     failed_tasks = []
     pending = running_instances.copy()
     
+    # 初始化失败计数
+    for item in pending:
+        item['fail_count'] = 0
+    
     check_count = 0
     
     while pending and (time.time() - start_time) < max_wait:
@@ -365,7 +383,6 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
         
         still_pending = []
         status_changed = False
-        current_status = []
         
         for item in pending:
             table = item['table']
@@ -376,7 +393,6 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
             
             if success and data:
                 state = data.get('state', 'UNKNOWN')
-                current_status.append((table, state))
                 
                 if state in ['SUCCESS', 'FINISHED']:
                     log(f"  ✅ {table}: 完成 ({state})")
@@ -391,14 +407,22 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
                     failed_tasks.append(item['task'])
                     status_changed = True
                 else:
-                    # 仍在运行中
+                    # 仍在运行中，重置失败计数
+                    item['fail_count'] = 0
                     log(f"  ⏳ {table}: {state}")
                     still_pending.append(item)
             else:
-                # 查询失败
-                log(f"  ⚠️  {table}: 查询失败 ({msg})")
-                current_status.append((table, f"查询失败: {msg}"))
-                still_pending.append(item)
+                # 查询失败，增加失败计数
+                item['fail_count'] += 1
+                if item['fail_count'] >= 3:
+                    log(f"  ❌ {table}: 查询失败超过3次，标记为失败 ({msg})")
+                    item['task']['final_status'] = 'failed'
+                    item['task']['error'] = f"查询失败: {msg}"
+                    failed_tasks.append(item['task'])
+                    status_changed = True
+                else:
+                    log(f"  ⚠️  {table}: 查询失败 ({msg})，第{item['fail_count']}次")
+                    still_pending.append(item)
         
         pending = still_pending
         
