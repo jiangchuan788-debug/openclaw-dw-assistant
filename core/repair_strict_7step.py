@@ -287,7 +287,12 @@ def step3_start_repair(tasks):
         success, result, msg = ds_api_post(f"/projects/{PROJECT_CODE}/executors/start-workflow-instance", data)
         
         if success:
-            instance_id = result.get('data')
+            instance_data = result.get('data')
+            # DS 3.3.0 返回的是数组格式 [id]，需要取第一个元素
+            if isinstance(instance_data, list) and len(instance_data) > 0:
+                instance_id = instance_data[0]
+            else:
+                instance_id = instance_data
             log(f"  ✅ 启动成功，实例ID: {instance_id}")
             task['status'] = 'success'
             task['instance_id'] = instance_id
