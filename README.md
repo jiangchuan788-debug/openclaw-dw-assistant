@@ -215,14 +215,48 @@ python3 tools/extract_ds_sh_usage.py DW_DM DW_DWD DW_RPT --output ./sql_export/a
 python3 tools/fill_ds_workflow_resources.py --project-name '巴基斯坦-数仓工作流_new' --workflow-name 'DWD'
 python3 tools/fill_ds_workflow_resources.py --project-name '巴基斯坦-数仓工作流_new' --workflow-name 'DWD' --apply
 
+# 3.1 对已有 resourceList 做统一回刷
+# DWD_SEC / DWD_SEC（1D）这类按固定资源根目录重建的场景
+python3 tools/fill_ds_workflow_resources.py \
+  --project-name '巴基斯坦-数仓工作流_new' \
+  --workflow-name 'DWD_SEC' \
+  --resource-root 'deploy/resources/starrocks_workflow/dwd_sec' \
+  --overwrite-existing --apply
+
+# pak_sr 这类 bash pak_sr/... 任务，保留原相对路径，只转换成 DS fullName
+python3 tools/fill_ds_workflow_resources.py \
+  --project-name '巴基斯坦-贷后数仓_new' \
+  --workflow-name 'DWD明细层构建(1)_import_20260402150146514' \
+  --overwrite-existing \
+  --reuse-existing-relative-paths \
+  --resource-prefix 'dolphinscheduler/resource/dolphinscheduler/resources' \
+  --apply
+
 # 4. 批量替换 DWD 任务脚本并切换环境到 dw_platform
 python3 tools/update_ds_dwd_shell_script.py --project-name '巴基斯坦-数仓工作流_new' --workflow-name 'DWD'
 python3 tools/update_ds_dwd_shell_script.py --project-name '巴基斯坦-数仓工作流_new' --workflow-name 'DWD' --apply
+
+# 4.1 强制统一替换所有 SHELL 任务脚本
+python3 tools/update_ds_dwd_shell_script.py \
+  --project-name '巴基斯坦-数仓工作流_new' \
+  --workflow-name 'DWD_SEC' \
+  --replace-all-shell-scripts \
+  --apply
 ```
 
 说明：
 - `tools/` 目录下这 4 个脚本是当前维护的 DS API 主链路。
 - `dolphinscheduler/` 目录里保留了一批历史脚本，部分仍使用旧路由或固定环境配置，适合参考，不建议直接当作现行脚本复用。
+- `fill_ds_workflow_resources.py` 这次新增了 3 个关键能力：
+  - `--overwrite-existing`：允许覆盖已有 `resourceList`
+  - `--reuse-existing-relative-paths`：保留任务里的相对路径，只规范化前缀
+  - `--resource-prefix`：把相对路径或展示路径转换成 DS 后端真正使用的 fullName
+- 这次排查里踩到的关键陷阱：
+  - UI 搜索到的资源路径，不一定等于 Worker 下载 OSS 用的 key
+  - `pak_sr` 资源里，展示路径和资源中心 `fullName` 是两套不同字符串
+  - 如果直接把展示路径写回 `resourceList`，前端可能能搜到，但执行时仍会 `NoSuchKey`
+  - 脚本现在已经会自动规范 3 种输入：相对路径、展示路径、双前缀错误值
+- `update_ds_dwd_shell_script.py` 新增了 `--replace-all-shell-scripts`，适合旧脚本文本不完全统一时批量替换。
 
 ---
 

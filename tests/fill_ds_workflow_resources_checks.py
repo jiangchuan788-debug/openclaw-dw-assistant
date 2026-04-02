@@ -69,6 +69,175 @@ class FillWorkflowResourcesTests(unittest.TestCase):
             [{"resourceName": "already.sql"}],
         )
 
+    def test_plan_task_updates_can_overwrite_existing_resource_list(self):
+        module = load_module()
+        tasks = [
+            {
+                "name": "dwd_a",
+                "code": 1,
+                "taskType": "SQL",
+                "taskParams": {
+                    "resourceList": [{"resourceName": "old/path.sql"}],
+                    "sql": "select 1",
+                },
+            }
+        ]
+
+        updated, changes = module.plan_task_updates(
+            tasks,
+            "deploy/resources/starrocks_workflow/dwd_sec",
+            overwrite_existing=True,
+        )
+
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["old_resource_name"], "old/path.sql")
+        self.assertEqual(
+            updated[0]["taskParams"]["resourceList"],
+            [
+                {
+                    "resourceName": "dolphinscheduler/resource/deploy/resources/starrocks_workflow/dwd_sec/dwd_a/dwd_a.sql"
+                }
+            ],
+        )
+
+    def test_prefix_resource_name_adds_prefix_for_relative_path(self):
+        module = load_module()
+
+        prefixed = module.prefix_resource_name(
+            "pak_sr/dwd_sql_job/dwd_fox_asset_group_office.sql",
+            "dolphinscheduler/resource/dolphinscheduler/resources",
+        )
+
+        self.assertEqual(
+            prefixed,
+            (
+                "dolphinscheduler/resource/dolphinscheduler/resources/"
+                "pak_sr/dwd_sql_job/dwd_fox_asset_group_office.sql"
+            ),
+        )
+
+    def test_prefix_resource_name_upgrades_display_path_to_full_name(self):
+        module = load_module()
+
+        prefixed = module.prefix_resource_name(
+            "dolphinscheduler/resources/pak_sr/sql_job_shell/starrocks_cli.sh",
+            "dolphinscheduler/resource/dolphinscheduler/resources",
+        )
+
+        self.assertEqual(
+            prefixed,
+            (
+                "dolphinscheduler/resource/dolphinscheduler/resources/"
+                "pak_sr/sql_job_shell/starrocks_cli.sh"
+            ),
+        )
+
+    def test_prefix_resource_name_normalizes_double_prefixed_path(self):
+        module = load_module()
+
+        prefixed = module.prefix_resource_name(
+            (
+                "dolphinscheduler/resource/dolphinscheduler/resources/"
+                "dolphinscheduler/resources/pak_sr/sql_job_shell/starrocks_cli.sh"
+            ),
+            "dolphinscheduler/resource/dolphinscheduler/resources",
+        )
+
+        self.assertEqual(
+            prefixed,
+            (
+                "dolphinscheduler/resource/dolphinscheduler/resources/"
+                "pak_sr/sql_job_shell/starrocks_cli.sh"
+            ),
+        )
+
+    def test_plan_task_updates_can_prefix_existing_relative_resource_list(self):
+        module = load_module()
+        tasks = [
+            {
+                "name": "dwd_fox_user_organization_df",
+                "code": 1,
+                "taskType": "SHELL",
+                "taskParams": {
+                    "resourceList": [
+                        {"resourceName": "pak_sr/sql_job_shell/starrocks_cli.sh"},
+                        {"resourceName": "pak_sr/dwd_sql_job/dwd_fox_user_organization_df.sql"},
+                    ],
+                    "rawScript": (
+                        "bash pak_sr/sql_job_shell/starrocks_cli.sh "
+                        "pak_sr/dwd_sql_job/dwd_fox_user_organization_df.sql ${etl_time}"
+                    ),
+                },
+            }
+        ]
+
+        updated, changes = module.plan_task_updates(
+            tasks,
+            "deploy/resources/starrocks_workflow/dwd",
+            overwrite_existing=True,
+            reuse_existing_relative_paths=True,
+            resource_prefix="dolphinscheduler/resource/dolphinscheduler/resources",
+        )
+
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(
+            updated[0]["taskParams"]["resourceList"],
+            [
+                {
+                    "resourceName": (
+                        "dolphinscheduler/resource/dolphinscheduler/resources/"
+                        "pak_sr/sql_job_shell/starrocks_cli.sh"
+                    )
+                },
+                {
+                    "resourceName": (
+                        "dolphinscheduler/resource/dolphinscheduler/resources/pak_sr/dwd_sql_job/"
+                        "dwd_fox_user_organization_df.sql"
+                    )
+                },
+            ],
+        )
+
+    def test_plan_task_updates_is_idempotent_for_prefixed_resource_list(self):
+        module = load_module()
+        tasks = [
+            {
+                "name": "dwd_fox_user_organization_df",
+                "code": 1,
+                "taskType": "SHELL",
+                "taskParams": {
+                    "resourceList": [
+                        {
+                            "resourceName": (
+                                "dolphinscheduler/resource/dolphinscheduler/resources/"
+                                "pak_sr/sql_job_shell/starrocks_cli.sh"
+                            )
+                        },
+                        {
+                            "resourceName": (
+                                "dolphinscheduler/resource/dolphinscheduler/resources/pak_sr/dwd_sql_job/"
+                                "dwd_fox_user_organization_df.sql"
+                            )
+                        },
+                    ]
+                },
+            }
+        ]
+
+        updated, changes = module.plan_task_updates(
+            tasks,
+            "deploy/resources/starrocks_workflow/dwd",
+            overwrite_existing=True,
+            reuse_existing_relative_paths=True,
+            resource_prefix="dolphinscheduler/resource/dolphinscheduler/resources",
+        )
+
+        self.assertEqual(changes, [])
+        self.assertEqual(
+            updated[0]["taskParams"]["resourceList"],
+            tasks[0]["taskParams"]["resourceList"],
+        )
+
     def test_plan_task_updates_handles_string_task_params(self):
         module = load_module()
         tasks = [

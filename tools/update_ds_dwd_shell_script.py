@@ -65,6 +65,7 @@ def plan_script_updates(
     old_script: str,
     new_script: str,
     target_environment_code: int | None = None,
+    replace_all_shell_scripts: bool = False,
     target_task_names: set[str] | None = None,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, str]]]:
     updated_tasks: List[Dict[str, object]] = []
@@ -87,7 +88,7 @@ def plan_script_updates(
         environment_changed = False
         old_environment_code = cloned.get("environmentCode")
 
-        if task_type == "SHELL" and raw_script == old_script:
+        if task_type == "SHELL" and (replace_all_shell_scripts or raw_script == old_script):
             task_params["rawScript"] = new_script
             script_changed = True
 
@@ -130,6 +131,11 @@ def main() -> None:
         help="实际提交更新；默认仅 dry-run 预览",
     )
     parser.add_argument(
+        "--replace-all-shell-scripts",
+        action="store_true",
+        help="忽略旧脚本文本是否完全匹配，直接统一替换所有 SHELL 任务脚本",
+    )
+    parser.add_argument(
         "--task-name",
         action="append",
         default=[],
@@ -152,6 +158,7 @@ def main() -> None:
         args.old_script,
         args.new_script,
         target_environment_code=environment_code,
+        replace_all_shell_scripts=args.replace_all_shell_scripts,
         target_task_names=target_task_names or None,
     )
 

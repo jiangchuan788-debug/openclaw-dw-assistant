@@ -182,10 +182,28 @@ def build_resource_path(task_name: str, resource_root: str) -> str:
     return f"{RESOURCE_PREFIX}/{relative_path}"
 
 
+def prefix_resource_name(resource_name: str, resource_prefix: str) -> str:
+    normalized_name = str(resource_name or "").strip()
+    if not normalized_name:
+        return ""
+
+    normalized_prefix = resource_prefix.rstrip("/")
+    display_marker = "dolphinscheduler/resources/"
+    if display_marker in normalized_name:
+        normalized_name = normalized_name.rsplit(display_marker, 1)[1]
+        return f"{normalized_prefix}/{normalized_name.lstrip('/')}"
+    if normalized_name.startswith("dolphinscheduler/resource/"):
+        return normalized_name
+    return f"{normalized_prefix}/{normalized_name.lstrip('/')}"
+
+
 def plan_task_updates(
     task_definition_list: Iterable[Dict[str, object]],
     resource_root: str,
+    overwrite_existing: bool = False,
     target_task_names: set[str] | None = None,
+    reuse_existing_relative_paths: bool = False,
+    resource_prefix: str = RESOURCE_PREFIX,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, str]]]:
     updated_tasks: List[Dict[str, object]] = []
     changes: List[Dict[str, str]] = []
@@ -201,16 +219,56 @@ def plan_task_updates(
             updated_tasks.append(cloned)
             continue
 
-        if task_name and not resource_list:
+        new_resource_list = None
+        should_skip_fallback_rebuild = False
+        if resource_list and reuse_existing_relative_paths:
+            should_skip_fallback_rebuild = True
+            rewritten_resources = []
+            has_change = False
+            old_resource_name = str((resource_list[0] or {}).get("resourceName", ""))
+            for item in resource_list:
+                entry = copy.deepcopy(item) if isinstance(item, dict) else {}
+                original_name = str(entry.get("resourceName", ""))
+                updated_name = prefix_resource_name(original_name, resource_prefix)
+                if updated_name and updated_name != original_name:
+                    has_change = True
+                entry["resourceName"] = updated_name
+                rewritten_resources.append(entry)
+            if has_change:
+                new_resource_list = rewritten_resources
+                changes.append(
+                    {
+                        "task_name": task_name,
+                        "task_code": task_code,
+                        "old_resource_name": old_resource_name,
+                        "resource_name": ", ".join(
+                            str(item.get("resourceName", "")) for item in rewritten_resources
+                        ),
+                    }
+                )
+
+        if (
+            new_resource_list is None
+            and not should_skip_fallback_rebuild
+            and task_name
+            and (overwrite_existing or not resource_list)
+        ):
             resource_name = build_resource_path(task_name, resource_root)
-            task_params["resourceList"] = [{"resourceName": resource_name}]
+            new_resource_list = [{"resourceName": resource_name}]
+            old_resource_name = ""
+            if resource_list:
+                old_resource_name = str((resource_list[0] or {}).get("resourceName", ""))
             changes.append(
                 {
                     "task_name": task_name,
                     "task_code": task_code,
+                    "old_resource_name": old_resource_name,
                     "resource_name": resource_name,
                 }
             )
+
+        if new_resource_list is not None:
+            task_params["resourceList"] = new_resource_list
 
         cloned["taskParams"] = task_params
         updated_tasks.append(cloned)
@@ -368,10 +426,25 @@ def main() -> None:
         help="实际提交更新；默认仅 dry-run 预览",
     )
     parser.add_argument(
+        "--overwrite-existing",
+        action="store_true",
+        help="强制覆盖已有 resourceList，而不是只补空值",
+    )
+    parser.add_argument(
         "--task-name",
         action="append",
         default=[],
         help="只处理指定任务名，可重复传入多次",
+    )
+    parser.add_argument(
+        "--reuse-existing-relative-paths",
+        action="store_true",
+        help="保留 resourceList 原有相对路径，只补完整前缀",
+    )
+    parser.add_argument(
+        "--resource-prefix",
+        default=RESOURCE_PREFIX,
+        help="资源名前缀，如 dolphinscheduler/resource 或 dolphinscheduler/resources",
     )
     args = parser.parse_args()
 
@@ -387,7 +460,10 @@ def main() -> None:
     updated_tasks, changes = plan_task_updates(
         detail.get("taskDefinitionList", []),
         args.resource_root,
+        overwrite_existing=args.overwrite_existing,
         target_task_names=target_task_names or None,
+        reuse_existing_relative_paths=args.reuse_existing_relative_paths,
+        resource_prefix=args.resource_prefix,
     )
 
     print(f"项目: {args.project_name} ({project_code})")

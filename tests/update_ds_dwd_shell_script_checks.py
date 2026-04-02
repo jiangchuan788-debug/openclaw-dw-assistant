@@ -41,6 +41,35 @@ class UpdateDsDwdShellScriptTests(unittest.TestCase):
         self.assertEqual(updated[0]["taskParams"]["rawScript"], module.NEW_SCRIPT)
         self.assertEqual(updated[1]["taskParams"]["rawScript"], "echo 1")
 
+    def test_plan_script_updates_can_force_replace_all_shell_scripts(self):
+        module = load_module()
+        tasks = [
+            {
+                "name": "dwd_a",
+                "code": 1,
+                "taskType": "SHELL",
+                "taskParams": {"rawScript": 'python3 $WATTREL_HOME/console.py etl --db=dwd_sec --table=${table} --args="${args}"'},
+            },
+            {
+                "name": "dwd_sql",
+                "code": 2,
+                "taskType": "SQL",
+                "taskParams": {"rawScript": "select 1"},
+            },
+        ]
+
+        updated, changes = module.plan_script_updates(
+            tasks,
+            module.OLD_SCRIPT,
+            module.NEW_SCRIPT,
+            replace_all_shell_scripts=True,
+        )
+
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["task_name"], "dwd_a")
+        self.assertEqual(updated[0]["taskParams"]["rawScript"], module.NEW_SCRIPT)
+        self.assertEqual(updated[1]["taskParams"]["rawScript"], "select 1")
+
     def test_plan_script_updates_also_updates_environment_code(self):
         module = load_module()
         tasks = [
