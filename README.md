@@ -50,7 +50,10 @@
 │       └── README.md
 │
 ├── tools/                       # 工具脚本
-│   ├── extract_ds_sql.py        # SQL提取工具
+│   ├── extract_ds_sql.py        # DS内嵌SQL提取
+│   ├── extract_ds_sh_usage.py   # DS中.sh资源使用清单
+│   ├── fill_ds_workflow_resources.py   # DS任务资源文件回填
+│   ├── update_ds_dwd_shell_script.py   # DWD脚本/环境批量更新
 │   ├── task_execution_checker.py # 执行检查工具
 │   └── README.md
 │
@@ -169,10 +172,10 @@ python3 core/repair_strict_7step.py
 ### 提取 SQL 代码
 
 ```bash
-python3 tools/extract_ds_sql.py <project_code> --name <project_name>
+python3 tools/extract_ds_sql.py --project-name <project_name> --output ./sql_export/<project_name>
 
 # 示例
-python3 tools/extract_ds_sql.py 159737550740160 --name okr_ads
+python3 tools/extract_ds_sql.py --project-name DW_DM --output ./sql_export/DW_DM
 ```
 
 ### 检查任务环境
@@ -180,6 +183,46 @@ python3 tools/extract_ds_sql.py 159737550740160 --name okr_ads
 ```bash
 python3 tools/task_execution_checker.py --task all
 ```
+
+### DS 调度 API 脚本
+
+下面这 4 个脚本是当前仓库里已经按 `http://127.0.0.1:12345/dolphinscheduler` 打通、并在实际环境中验证过的 DS 调度 API 脚本：
+
+| 脚本 | 用途 | 当前状态 |
+|------|------|----------|
+| `tools/extract_ds_sql.py` | 拉取项目工作流详情并导出内嵌 SQL | 已实测 |
+| `tools/extract_ds_sh_usage.py` | 导出项目中 `.sh` 资源/脚本引用清单 | 单测通过 |
+| `tools/fill_ds_workflow_resources.py` | 给指定工作流任务补 `resourceList` | 已实测 |
+| `tools/update_ds_dwd_shell_script.py` | 批量更新 DWD 任务脚本和环境 | 已实测 |
+
+通用环境变量：
+
+```bash
+export DS_BASE_URL='http://127.0.0.1:12345/dolphinscheduler'
+export DS_TOKEN='your_token'
+```
+
+常见用法：
+
+```bash
+# 1. 导出指定项目的内嵌 SQL
+python3 tools/extract_ds_sql.py --project-name DW_DM --output ./sql_export/DW_DM
+
+# 2. 导出多个项目中的 .sh 使用清单
+python3 tools/extract_ds_sh_usage.py DW_DM DW_DWD DW_RPT --output ./sql_export/all_projects_sh_usage.csv
+
+# 3. 给 DWD 工作流批量补资源文件（先 dry-run，再 apply）
+python3 tools/fill_ds_workflow_resources.py --project-name '巴基斯坦-数仓工作流_new' --workflow-name 'DWD'
+python3 tools/fill_ds_workflow_resources.py --project-name '巴基斯坦-数仓工作流_new' --workflow-name 'DWD' --apply
+
+# 4. 批量替换 DWD 任务脚本并切换环境到 dw_platform
+python3 tools/update_ds_dwd_shell_script.py --project-name '巴基斯坦-数仓工作流_new' --workflow-name 'DWD'
+python3 tools/update_ds_dwd_shell_script.py --project-name '巴基斯坦-数仓工作流_new' --workflow-name 'DWD' --apply
+```
+
+说明：
+- `tools/` 目录下这 4 个脚本是当前维护的 DS API 主链路。
+- `dolphinscheduler/` 目录里保留了一批历史脚本，部分仍使用旧路由或固定环境配置，适合参考，不建议直接当作现行脚本复用。
 
 ---
 
