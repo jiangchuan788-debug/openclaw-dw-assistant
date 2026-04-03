@@ -70,6 +70,70 @@ class UpdateDsDwdShellScriptTests(unittest.TestCase):
         self.assertEqual(updated[0]["taskParams"]["rawScript"], module.NEW_SCRIPT)
         self.assertEqual(updated[1]["taskParams"]["rawScript"], "select 1")
 
+    def test_plan_script_updates_can_replace_path_prefixes_in_script_and_resources(self):
+        module = load_module()
+        tasks = [
+            {
+                "name": "dwd_a",
+                "code": 1,
+                "taskType": "SHELL",
+                "environmentCode": 11,
+                "taskParams": {
+                    "rawScript": (
+                        "bash pak/sql_job_shell/redo_biz_cli.sh "
+                        "pak/dwd_sql_job/dwd_a.sql ${etl_time}"
+                    ),
+                    "resourceList": [
+                        {
+                            "resourceName": (
+                                "dolphinscheduler/resource/dolphinscheduler/resources/"
+                                "pak/sql_job_shell/redo_biz_cli.sh"
+                            )
+                        },
+                        {
+                            "resourceName": (
+                                "dolphinscheduler/resource/dolphinscheduler/resources/"
+                                "pak/dwd_sql_job/dwd_a.sql"
+                            )
+                        },
+                    ],
+                },
+            }
+        ]
+
+        updated, changes = module.plan_script_updates(
+            tasks,
+            "__no_exact_match__",
+            module.NEW_SCRIPT,
+            target_environment_code=22,
+            raw_script_replacements=[("pak/", "pak_sr/")],
+            resource_replacements=[("/pak/", "/pak_sr/")],
+        )
+
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(updated[0]["environmentCode"], 22)
+        self.assertEqual(
+            updated[0]["taskParams"]["rawScript"],
+            "bash pak_sr/sql_job_shell/redo_biz_cli.sh pak_sr/dwd_sql_job/dwd_a.sql ${etl_time}",
+        )
+        self.assertEqual(
+            updated[0]["taskParams"]["resourceList"],
+            [
+                {
+                    "resourceName": (
+                        "dolphinscheduler/resource/dolphinscheduler/resources/"
+                        "pak_sr/sql_job_shell/redo_biz_cli.sh"
+                    )
+                },
+                {
+                    "resourceName": (
+                        "dolphinscheduler/resource/dolphinscheduler/resources/"
+                        "pak_sr/dwd_sql_job/dwd_a.sql"
+                    )
+                },
+            ],
+        )
+
     def test_plan_script_updates_also_updates_environment_code(self):
         module = load_module()
         tasks = [

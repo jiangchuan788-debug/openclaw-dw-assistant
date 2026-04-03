@@ -43,6 +43,14 @@ NEW_SCRIPT = 'python3 $WATTREL2_HOME/console.py etl --table=${table} --args="${a
 DEFAULT_ENVIRONMENT_NAME = "dw_platform"
 
 
+def apply_replacements(value: str, replacements: Iterable[Tuple[str, str]]) -> str:
+    result = value
+    for old, new in replacements:
+        if old:
+            result = result.replace(old, new)
+    return result
+
+
 def get_environment_list() -> List[Dict[str, object]]:
     success, data = ds_api_get("/environment/list-paging?pageNo=1&pageSize=200&searchVal=")
     if not success:
@@ -66,6 +74,8 @@ def plan_script_updates(
     new_script: str,
     target_environment_code: int | None = None,
     replace_all_shell_scripts: bool = False,
+    raw_script_replacements: Iterable[Tuple[str, str]] = (),
+    resource_replacements: Iterable[Tuple[str, str]] = (),
     target_task_names: set[str] | None = None,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, str]]]:
     updated_tasks: List[Dict[str, object]] = []
@@ -85,6 +95,7 @@ def plan_script_updates(
             continue
 
         script_changed = False
+        resources_changed = False
         environment_changed = False
         old_environment_code = cloned.get("environmentCode")
 
@@ -92,11 +103,29 @@ def plan_script_updates(
             task_params["rawScript"] = new_script
             script_changed = True
 
+        rewritten_script = apply_replacements(str(task_params.get("rawScript", "")), raw_script_replacements)
+        if rewritten_script != str(task_params.get("rawScript", "")):
+            task_params["rawScript"] = rewritten_script
+            script_changed = True
+
+        resource_list = task_params.get("resourceList", []) or []
+        rewritten_resources = []
+        for item in resource_list:
+            entry = copy.deepcopy(item) if isinstance(item, dict) else {}
+            original_name = str(entry.get("resourceName", ""))
+            updated_name = apply_replacements(original_name, resource_replacements)
+            if updated_name != original_name:
+                resources_changed = True
+            entry["resourceName"] = updated_name
+            rewritten_resources.append(entry)
+        if rewritten_resources:
+            task_params["resourceList"] = rewritten_resources
+
         if target_environment_code is not None and cloned.get("environmentCode") != target_environment_code:
             cloned["environmentCode"] = target_environment_code
             environment_changed = True
 
-        if script_changed or environment_changed:
+        if script_changed or resources_changed or environment_changed:
             changes.append(
                 {
                     "task_name": task_name,
@@ -136,6 +165,22 @@ def main() -> None:
         help="忽略旧脚本文本是否完全匹配，直接统一替换所有 SHELL 任务脚本",
     )
     parser.add_argument(
+        "--raw-script-replace",
+        action="append",
+        nargs=2,
+        metavar=("OLD", "NEW"),
+        default=[],
+        help="对 rawScript 做字符串替换，可重复传入多次",
+    )
+    parser.add_argument(
+        "--resource-replace",
+        action="append",
+        nargs=2,
+        metavar=("OLD", "NEW"),
+        default=[],
+        help="对 resourceList.resourceName 做字符串替换，可重复传入多次",
+    )
+    parser.add_argument(
         "--task-name",
         action="append",
         default=[],
@@ -159,6 +204,8 @@ def main() -> None:
         args.new_script,
         target_environment_code=environment_code,
         replace_all_shell_scripts=args.replace_all_shell_scripts,
+        raw_script_replacements=[(old, new) for old, new in args.raw_script_replace],
+        resource_replacements=[(old, new) for old, new in args.resource_replace],
         target_task_names=target_task_names or None,
     )
 
