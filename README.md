@@ -202,6 +202,25 @@ export DS_BASE_URL='http://127.0.0.1:12345/dolphinscheduler'
 export DS_TOKEN='your_token'
 ```
 
+本地访问 DS 前，通常需要先建立 SSH 隧道：
+
+```bash
+ssh -N -f -L 12345:10.20.84.176:12345 -i /Users/jiangchuanchen/Desktop/id_rsa_pak jiangchuan@8.222.174.163 -p 36000 -o ServerAliveInterval=60 -o TCPKeepAlive=yes
+```
+
+快速检查隧道是否正常：
+
+```bash
+lsof -iTCP:12345 -sTCP:LISTEN -n -P
+curl -s 'http://127.0.0.1:12345/dolphinscheduler/projects?pageNo=1&pageSize=1' -H "token: $DS_TOKEN"
+```
+
+如果端口被旧隧道占用，可以先清掉再重建：
+
+```bash
+pkill -f 'ssh -N -f -L 12345:10.20.84.176:12345'
+```
+
 常见用法：
 
 ```bash
@@ -221,6 +240,15 @@ python3 tools/fill_ds_workflow_resources.py \
   --project-name '巴基斯坦-数仓工作流_new' \
   --workflow-name 'DWD_SEC' \
   --resource-root 'deploy/resources/starrocks_workflow/dwd_sec' \
+  --overwrite-existing --apply
+
+# 3.2 所有命中任务统一使用同一个资源文件
+# 适合 kbm_summary_reprint_12h 这类所有任务共用一个 SQL 资源的工作流
+python3 tools/fill_ds_workflow_resources.py \
+  --project-name '巴基斯坦-数仓工作流_new' \
+  --workflow-name 'kbm_summary_reprint_12h' \
+  --resource-root 'deploy/resources/starrocks_workflow/kbm/kbm_summary' \
+  --resource-name-override 'dolphinscheduler/resource/deploy/resources/starrocks_workflow/kbm/kbm_summary/kbm_summary.sql' \
   --overwrite-existing --apply
 
 # pak_sr 这类 bash pak_sr/... 任务，保留原相对路径，只转换成 DS fullName

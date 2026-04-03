@@ -87,12 +87,26 @@ export DS_BASE_URL='http://127.0.0.1:12345/dolphinscheduler'
 export DS_TOKEN='your_token'
 ```
 
+常用 SSH 隧道命令：
+
+```bash
+ssh -N -f -L 12345:10.20.84.176:12345 -i /Users/jiangchuanchen/Desktop/id_rsa_pak jiangchuan@8.222.174.163 -p 36000 -o ServerAliveInterval=60 -o TCPKeepAlive=yes
+```
+
+检查隧道：
+
+```bash
+lsof -iTCP:12345 -sTCP:LISTEN -n -P
+curl -s 'http://127.0.0.1:12345/dolphinscheduler/projects?pageNo=1&pageSize=1' -H "token: $DS_TOKEN"
+```
+
 说明：
 - 上面 4 个 DS API 脚本已经按当前本地隧道地址适配。
 - 默认建议先 dry-run，再带 `--apply` 执行真实更新。
 - `fill_ds_workflow_resources.py` 有两种模式：
   - 默认模式：按 `resource_root/任务名/任务名.sql` 直接重建 `resourceList`
   - `--reuse-existing-relative-paths`：保留任务里已有的相对路径，只补成完整 DS fullName
+  - `--resource-name-override`：所有命中的任务统一使用同一个完整资源文件
 - `pak_sr` 这类任务有一个常见陷阱：
   - 前端搜索框里看到的是展示路径，例如 `dolphinscheduler/resources/pak_sr/...`
   - Worker 真正下载 OSS 时用的是资源中心 `fullName`
@@ -100,3 +114,14 @@ export DS_TOKEN='your_token'
 - 如果某个工作流已经被错误写成双前缀，例如
   `dolphinscheduler/resource/dolphinscheduler/resources/dolphinscheduler/resources/...`
   现在脚本会自动规范回单一正确前缀。
+
+示例：`kbm_summary_reprint_12h` 全部任务共用同一个资源文件
+
+```bash
+python3 tools/fill_ds_workflow_resources.py \
+  --project-name '巴基斯坦-数仓工作流_new' \
+  --workflow-name 'kbm_summary_reprint_12h' \
+  --resource-root 'deploy/resources/starrocks_workflow/kbm/kbm_summary' \
+  --resource-name-override 'dolphinscheduler/resource/deploy/resources/starrocks_workflow/kbm/kbm_summary/kbm_summary.sql' \
+  --overwrite-existing --apply
+```

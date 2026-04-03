@@ -362,6 +362,57 @@ class FillWorkflowResourcesTests(unittest.TestCase):
             [{"resourceName": "dolphinscheduler/resource/deploy/resources/starrocks_workflow/dwd/dwd_b/dwd_b.sql"}],
         )
 
+    def test_plan_task_updates_can_use_single_override_resource(self):
+        module = load_module()
+        tasks = [
+            {
+                "name": "kbm_summary-30",
+                "code": 1,
+                "taskType": "SHELL",
+                "taskParams": {"resourceList": [], "rawScript": "echo a"},
+            },
+            {
+                "name": "kbm_summary-60",
+                "code": 2,
+                "taskType": "SHELL",
+                "taskParams": {"resourceList": [], "rawScript": "echo b"},
+            },
+        ]
+
+        updated, changes = module.plan_task_updates(
+            tasks,
+            "deploy/resources/starrocks_workflow/kbm/kbm_summary",
+            overwrite_existing=True,
+            resource_name_override=(
+                "dolphinscheduler/resource/deploy/resources/starrocks_workflow/"
+                "kbm/kbm_summary/kbm_summary.sql"
+            ),
+        )
+
+        self.assertEqual(len(changes), 2)
+        self.assertEqual(
+            updated[0]["taskParams"]["resourceList"],
+            [
+                {
+                    "resourceName": (
+                        "dolphinscheduler/resource/deploy/resources/starrocks_workflow/"
+                        "kbm/kbm_summary/kbm_summary.sql"
+                    )
+                }
+            ],
+        )
+        self.assertEqual(
+            updated[1]["taskParams"]["resourceList"],
+            [
+                {
+                    "resourceName": (
+                        "dolphinscheduler/resource/deploy/resources/starrocks_workflow/"
+                        "kbm/kbm_summary/kbm_summary.sql"
+                    )
+                }
+            ],
+        )
+
     def test_find_upstream_codes_ignores_root_relation(self):
         module = load_module()
         relations = [

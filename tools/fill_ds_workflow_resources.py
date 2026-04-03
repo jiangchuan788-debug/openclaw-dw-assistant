@@ -204,6 +204,7 @@ def plan_task_updates(
     target_task_names: set[str] | None = None,
     reuse_existing_relative_paths: bool = False,
     resource_prefix: str = RESOURCE_PREFIX,
+    resource_name_override: str | None = None,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, str]]]:
     updated_tasks: List[Dict[str, object]] = []
     changes: List[Dict[str, str]] = []
@@ -253,7 +254,11 @@ def plan_task_updates(
             and task_name
             and (overwrite_existing or not resource_list)
         ):
-            resource_name = build_resource_path(task_name, resource_root)
+            resource_name = (
+                resource_name_override
+                if resource_name_override
+                else build_resource_path(task_name, resource_root)
+            )
             new_resource_list = [{"resourceName": resource_name}]
             old_resource_name = ""
             if resource_list:
@@ -446,6 +451,11 @@ def main() -> None:
         default=RESOURCE_PREFIX,
         help="资源名前缀，如 dolphinscheduler/resource 或 dolphinscheduler/resources",
     )
+    parser.add_argument(
+        "--resource-name-override",
+        default="",
+        help="直接指定完整 resourceName，命中的任务统一使用这个资源",
+    )
     args = parser.parse_args()
 
     if not DS_TOKEN:
@@ -464,6 +474,7 @@ def main() -> None:
         target_task_names=target_task_names or None,
         reuse_existing_relative_paths=args.reuse_existing_relative_paths,
         resource_prefix=args.resource_prefix,
+        resource_name_override=args.resource_name_override.strip() or None,
     )
 
     print(f"项目: {args.project_name} ({project_code})")
