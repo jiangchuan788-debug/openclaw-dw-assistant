@@ -15,6 +15,7 @@ from datetime import datetime
 # TV API配置
 TV_API_URL = 'https://tv-service-alert.kuainiu.chat/alert/v2/array'
 TV_BOT_ID = 'fbbcabb4-d187-4d9e-8e1e-ba7654a24d1c'
+TV_APP_ID = 'alert'
 
 
 def send_tv_report(message, mentions=None):
@@ -30,12 +31,17 @@ def send_tv_report(message, mentions=None):
     """
     if mentions is None:
         mentions = []
+
+    text = message
+    if mentions:
+        mention_lines = [f"@{item}" for item in mentions]
+        text = f"{message}\n\n" + "\n".join(mention_lines)
     
-    # 构建请求体
+    # TV API 实测要求顶层必须包含 message 字段。
     payload = {
+        'appId': TV_APP_ID,
         'botId': TV_BOT_ID,
-        'message': message,
-        'mentions': mentions
+        'message': text
     }
     
     # 转换为JSON
@@ -58,8 +64,7 @@ def send_tv_report(message, mentions=None):
             status_code = response.getcode()
             response_body = response.read().decode('utf-8')
             
-            # HTTP 202表示成功接受
-            if status_code == 202:
+            if 200 <= status_code < 300:
                 return {
                     'success': True,
                     'status_code': status_code,
@@ -73,10 +78,16 @@ def send_tv_report(message, mentions=None):
                 }
                 
     except urllib.error.HTTPError as e:
+        response_body = ''
+        if e.fp is not None:
+            try:
+                response_body = e.fp.read().decode('utf-8')
+            except Exception:
+                response_body = ''
         return {
             'success': False,
             'status_code': e.code,
-            'response': str(e.reason)
+            'response': response_body or str(e.reason)
         }
     except Exception as e:
         return {

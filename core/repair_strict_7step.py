@@ -454,6 +454,33 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
     return completed_tasks, failed_tasks
 
 
+def execute_repairs_in_batches(tasks, max_parallel=5):
+    """分批执行修复任务，控制同时运行的实例数量"""
+    if max_parallel <= 0:
+        raise ValueError("max_parallel must be greater than 0")
+
+    all_results = []
+    all_completed_tasks = []
+    all_failed_tasks = []
+
+    total_batches = (len(tasks) + max_parallel - 1) // max_parallel
+
+    for batch_index, start in enumerate(range(0, len(tasks), max_parallel), 1):
+        batch_tasks = tasks[start:start + max_parallel]
+        log("\n" + "=" * 70)
+        log(f"【批次 {batch_index}/{total_batches}】执行 {len(batch_tasks)} 个修复任务")
+        log("=" * 70)
+
+        batch_results, running_instances = step3_start_repair(batch_tasks)
+        completed_tasks, failed_tasks = step4_wait_and_check(running_instances)
+
+        all_results.extend(batch_results)
+        all_completed_tasks.extend(completed_tasks)
+        all_failed_tasks.extend(failed_tasks)
+
+    return all_results, all_completed_tasks, all_failed_tasks
+
+
 def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
     """步骤5: 执行复验"""
     log("\n" + "="*70)
@@ -642,24 +669,25 @@ def send_tv_report_to_dingtalk(report_content):
         
         log(f"✅ TV报告已生成: {report_file}")
         
-        # 尝试使用sessions_send发送到钉钉
+        # 优先直接调用TV API，避免依赖本机 openclaw 命令
         try:
-            # 尝试获取当前会话并发送
-            import subprocess
-            result = subprocess.run(
-                ['openclaw', 'message', 'send', '--text', report_content],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                log("✅ TV报告已通过openclaw命令发送")
+            from core.send_tv_report import send_tv_report
+
+            mentions_env = os.environ.get('TV_MENTIONS', '').strip()
+            mentions = [m.strip() for m in mentions_env.split(',') if m.strip()]
+            result = send_tv_report(report_content, mentions=mentions)
+
+            if result.get('success'):
+                log(f"✅ TV报告已直接发送到TV API (HTTP {result.get('status_code')})")
             else:
-                log(f"⚠️ openclaw命令发送失败: {result.stderr}")
+                log(
+                    "⚠️ 直接发送TV API失败: "
+                    f"HTTP {result.get('status_code')}, {result.get('response')}"
+                )
         except Exception as e:
-            log(f"⚠️ 尝试使用openclaw命令发送失败: {e}")
+            log(f"⚠️ 尝试直接发送TV API失败: {e}")
         
-        # 方法2: 通过打印特殊标记（如果在钉钉环境中）
+        # 兜底：控制台输出，便于n8n继续采集日志
         print(f"\n{'='*50}")
         print("📺 TV告警修复报告")
         print(f"{'='*50}")
@@ -693,11 +721,8 @@ def main():
     # 步骤2: 查找工作流
     tasks = step2_find_locations(alerts)
     
-    # 步骤3: 启动修复
-    results, running_instances = step3_start_repair(tasks)
-    
-    # 步骤4: 动态监控（每30秒检查一次）
-    completed_tasks, failed_tasks = step4_wait_and_check(running_instances)
+    # 步骤3-4: 分批启动修复并动态监控（最多并行5个）
+    results, completed_tasks, failed_tasks = execute_repairs_in_batches(tasks, max_parallel=5)
     
     # 步骤5: 执行复验
     fuyan_results = step5_execute_fuyan(completed_tasks, failed_tasks, alerts)
