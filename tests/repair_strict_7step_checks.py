@@ -172,21 +172,23 @@ class RepairStrict7StepTests(unittest.TestCase):
 
     def test_generate_tv_report_lists_manual_review_items(self):
         module = load_module()
-        manual_review_tasks = [
-            {
-                "table": "ods_qsq_erp_cpop_settlement_order_procedure",
-                "error": "疑似冗余数据，已重跑一次仍未恢复，转人工处理",
-            }
-        ]
+        summary = {
+            "initial_alert_count": 1,
+            "resolved_count": 0,
+            "remaining_count": 1,
+            "manual_review_count": 1,
+            "resolved_tasks": [],
+            "remaining_tasks": [
+                {
+                    "table": "ods_qsq_erp_cpop_settlement_order_procedure",
+                    "error": "疑似冗余数据，已重跑一次仍未恢复，转人工处理",
+                }
+            ],
+            "post_fuyan_remaining_tables": {"ods_qsq_erp_cpop_settlement_order_procedure"},
+        }
 
-        with mock.patch.object(module, "log"), mock.patch.dict(sys.modules, {"alert.db_config": None}, clear=False):
-            report = module.generate_tv_report(
-                completed_tasks=[],
-                failed_tasks=[],
-                fuyan_results=[],
-                alerts=[],
-                manual_review_tasks=manual_review_tasks,
-            )
+        with mock.patch.object(module, "log"):
+            report = module.generate_tv_report(summary, [])
 
         self.assertIn("需人工处理", report)
         self.assertIn("ods_qsq_erp_cpop_settlement_order_procedure", report)
@@ -226,6 +228,105 @@ class RepairStrict7StepTests(unittest.TestCase):
             count = module.count_remaining_alert_tables()
 
         self.assertEqual(count, 2)
+
+    def test_summarize_repair_outcome_uses_post_fuyan_remaining_tables(self):
+        module = load_module()
+        alerts = [
+            {"table": "dwd_fox_call_history", "dt": "2026-04-21"},
+            {"table": "dwd_asset_biz_report", "dt": "2026-04-21"},
+        ]
+        completed_tasks = [
+            {"table": "dwd_fox_call_history", "dt": "2026-04-21"},
+            {"table": "dwd_asset_biz_report", "dt": "2026-04-21"},
+        ]
+        failed_tasks = []
+        manual_review_tasks = []
+        remaining_tables = {"dwd_asset_biz_report"}
+
+        summary = module.summarize_repair_outcome(
+            alerts=alerts,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            manual_review_tasks=manual_review_tasks,
+            remaining_tables=remaining_tables,
+        )
+
+        self.assertEqual(summary["initial_alert_count"], 2)
+        self.assertEqual(summary["resolved_count"], 1)
+        self.assertEqual(summary["remaining_count"], 1)
+        self.assertEqual(
+            [item["table"] for item in summary["resolved_tasks"]],
+            ["dwd_fox_call_history"],
+        )
+        self.assertEqual(
+            [item["table"] for item in summary["remaining_tasks"]],
+            ["dwd_asset_biz_report"],
+        )
+        self.assertEqual(summary["manual_review_count"], 1)
+
+    def test_generate_tv_report_describes_resolved_and_manual_review_after_fuyan(self):
+        module = load_module()
+        summary = {
+            "initial_alert_count": 2,
+            "resolved_count": 1,
+            "remaining_count": 1,
+            "manual_review_count": 1,
+            "resolved_tasks": [
+                {"table": "dwd_fox_call_history", "dt": "2026-04-21"}
+            ],
+            "remaining_tasks": [
+                {
+                    "table": "dwd_asset_biz_report",
+                    "dt": "2026-04-21",
+                    "error": "复验完成后告警仍存在，需人工处理",
+                }
+            ],
+            "post_fuyan_remaining_tables": {"dwd_asset_biz_report"},
+        }
+        fuyan_results = [
+            {"name": "每日复验全级别数据(W-1)", "status": "success", "id": 806145}
+        ]
+
+        with mock.patch.object(module, "log"):
+            report = module.generate_tv_report(summary, fuyan_results)
+
+        self.assertIn("初始去重告警: 2 个", report)
+        self.assertIn("复验后已消失: 1 个", report)
+        self.assertIn("复验后仍存在: 1 个", report)
+        self.assertIn("当前未处理告警表: 1 个", report)
+        self.assertIn("dwd_fox_call_history", report)
+        self.assertIn("dwd_asset_biz_report", report)
+        self.assertIn("复验完成后告警仍存在，需人工处理", report)
+
+    def test_evaluate_repair_outcome_queries_remaining_tables_after_fuyan_wait(self):
+        module = load_module()
+        completed_tasks = [{"table": "dwd_fox_call_history", "dt": "2026-04-21"}]
+        failed_tasks = []
+        alerts = [{"table": "dwd_fox_call_history", "dt": "2026-04-21"}]
+        fuyan_results = [{"name": "每日复验全级别数据(W-1)", "status": "success", "id": 806145}]
+
+        with mock.patch.object(
+            module,
+            "wait_for_fuyan_results",
+            return_value=fuyan_results,
+        ) as wait_mock, mock.patch.object(
+            module,
+            "get_remaining_alert_tables",
+            return_value=set(),
+        ) as remaining_mock:
+            summary, final_fuyan_results = module.evaluate_repair_outcome(
+                alerts=alerts,
+                completed_tasks=completed_tasks,
+                failed_tasks=failed_tasks,
+                manual_review_tasks=[],
+                fuyan_results=fuyan_results,
+            )
+
+        wait_mock.assert_called_once_with(fuyan_results)
+        remaining_mock.assert_called_once()
+        self.assertEqual(final_fuyan_results, fuyan_results)
+        self.assertEqual(summary["resolved_count"], 1)
+        self.assertEqual(summary["remaining_count"], 0)
 
 
 if __name__ == "__main__":

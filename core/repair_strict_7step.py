@@ -150,6 +150,11 @@ def resolve_repair_table(row):
 
 def count_remaining_alert_tables():
     """统计当前剩余未处理告警的去重表数，口径与扫描阶段保持一致"""
+    return len(get_remaining_alert_tables())
+
+
+def get_remaining_alert_tables():
+    """查询当前数据库中仍未处理的去重告警表集合"""
     from alert.db_config import get_db_connection
 
     conn = get_db_connection()
@@ -173,7 +178,7 @@ def count_remaining_alert_tables():
         if table_name:
             unique_tables.add(table_name)
 
-    return len(unique_tables)
+    return unique_tables
 
 
 def step1_scan_alerts():
@@ -709,7 +714,126 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
     return fuyan_results
 
 
-def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, alerts, manual_review_tasks=None):
+def wait_for_fuyan_results(fuyan_results, poll_interval=30, max_wait=1800):
+    """等待已启动的复验工作流完成，补充最终状态"""
+    running_results = [
+        dict(item)
+        for item in fuyan_results
+        if item.get('status') == 'success' and item.get('id')
+    ]
+    if not running_results:
+        return fuyan_results
+
+    start_time = time.time()
+    pending = {str(item['id']): item for item in running_results}
+
+    while pending and (time.time() - start_time) < max_wait:
+        still_pending = {}
+        for instance_id, item in pending.items():
+            success, data, msg = ds_api_get(
+                f"/projects/{FUYAN_PROJECT_CODE}/workflow-instances/{instance_id}"
+            )
+            if not success or not data:
+                item['final_status'] = 'query_failed'
+                item['error'] = msg or '查询复验实例状态失败'
+                still_pending[instance_id] = item
+                continue
+
+            state = data.get('state', 'UNKNOWN')
+            item['state'] = state
+            item['end_time'] = data.get('endTime')
+            if state in ['SUCCESS', 'FINISHED']:
+                item['final_status'] = 'success'
+            elif state in ['FAILED', 'KILL', 'STOP']:
+                item['final_status'] = 'failed'
+                item['error'] = f"状态: {state}"
+            else:
+                still_pending[instance_id] = item
+
+        pending = still_pending
+        if pending:
+            time.sleep(poll_interval)
+
+    for item in pending.values():
+        item['final_status'] = 'timeout'
+        item.setdefault('error', '等待复验结果超时')
+
+    final_results = []
+    running_by_id = {str(item['id']): item for item in running_results}
+    for item in fuyan_results:
+        instance_id = item.get('id')
+        if instance_id is not None and str(instance_id) in running_by_id:
+            final_results.append(running_by_id[str(instance_id)])
+        else:
+            final_results.append(item)
+    return final_results
+
+
+def summarize_repair_outcome(alerts, completed_tasks, failed_tasks, manual_review_tasks, remaining_tables):
+    """基于复验后的数据库状态汇总最终修复结果"""
+    initial_alerts = []
+    seen_tables = set()
+    for alert in alerts:
+        table = alert.get('table')
+        if table and table not in seen_tables:
+            seen_tables.add(table)
+            initial_alerts.append(dict(alert))
+
+    initial_by_table = {item['table']: item for item in initial_alerts}
+    completed_by_table = {item['table']: item for item in completed_tasks if item.get('table')}
+    failed_by_table = {item['table']: item for item in failed_tasks if item.get('table')}
+    manual_by_table = {item['table']: item for item in manual_review_tasks if item.get('table')}
+
+    resolved_tasks = []
+    remaining_tasks = []
+
+    for alert in initial_alerts:
+        table = alert['table']
+        if table not in remaining_tables:
+            resolved_task = dict(alert)
+            resolved_task.update(completed_by_table.get(table, {}))
+            resolved_task['result'] = 'resolved'
+            resolved_tasks.append(resolved_task)
+            continue
+
+        remaining_task = dict(alert)
+        remaining_task.update(completed_by_table.get(table, {}))
+        if table in failed_by_table:
+            remaining_task.update(failed_by_table[table])
+        if table in manual_by_table:
+            remaining_task.update(manual_by_table[table])
+        remaining_task['result'] = 'manual_review'
+        remaining_task.setdefault('error', '复验完成后告警仍存在，需人工处理')
+        remaining_tasks.append(remaining_task)
+
+    return {
+        'initial_alert_count': len(initial_alerts),
+        'resolved_count': len(resolved_tasks),
+        'remaining_count': len(remaining_tasks),
+        'manual_review_count': len(remaining_tasks),
+        'resolved_tasks': resolved_tasks,
+        'remaining_tasks': remaining_tasks,
+        'post_fuyan_remaining_tables': set(remaining_tables),
+    }
+
+
+def evaluate_repair_outcome(alerts, completed_tasks, failed_tasks, manual_review_tasks, fuyan_results):
+    """等待复验完成后，再根据数据库回查结果判断最终修复成败"""
+    log("\n5.3 等待复验完成并回查告警结果...")
+    final_fuyan_results = wait_for_fuyan_results(fuyan_results)
+    remaining_tables = get_remaining_alert_tables()
+    log(f"  📋 复验后数据库仍未处理告警表: {len(remaining_tables)} 个")
+    summary = summarize_repair_outcome(
+        alerts=alerts,
+        completed_tasks=completed_tasks,
+        failed_tasks=failed_tasks,
+        manual_review_tasks=manual_review_tasks,
+        remaining_tables=remaining_tables,
+    )
+    return summary, final_fuyan_results
+
+
+def step6_save_report(results, completed_tasks, failed_tasks, final_fuyan_results, summary, manual_review_tasks=None):
     """步骤6: 保存记录并发送TV报告"""
     if manual_review_tasks is None:
         manual_review_tasks = []
@@ -722,6 +846,8 @@ def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, ale
     os.makedirs(record_dir, exist_ok=True)
     
     detail_file = f"{record_dir}/detail_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    summary_for_json = dict(summary)
+    summary_for_json['post_fuyan_remaining_tables'] = sorted(summary['post_fuyan_remaining_tables'])
     with open(detail_file, 'w') as f:
         json.dump({
             'timestamp': datetime.now().isoformat(),
@@ -729,93 +855,72 @@ def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, ale
             'completed_tasks': completed_tasks,
             'failed_tasks': failed_tasks,
             'manual_review_tasks': manual_review_tasks,
-            'fuyan_results': fuyan_results,
+            'fuyan_results': final_fuyan_results,
+            'summary': summary_for_json,
         }, f, indent=2, ensure_ascii=False)
     
     log(f"  ✅ 记录已保存: {detail_file}")
     
     # 生成TV报告内容
-    tv_report = generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts, manual_review_tasks=manual_review_tasks)
+    tv_report = generate_tv_report(summary, final_fuyan_results)
     
     # 发送TV报告到钉钉
     send_tv_report_to_dingtalk(tv_report)
 
 
-def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts, manual_review_tasks=None):
+def generate_tv_report(summary, fuyan_results):
     """生成TV格式报告"""
-    if manual_review_tasks is None:
-        manual_review_tasks = []
-    
-    # 查询当前剩余未处理告警数量
-    remaining_count = 0
-    try:
-        remaining_count = count_remaining_alert_tables()
-    except Exception as e:
-        log(f"  ⚠️ 查询剩余告警数量失败: {e}")
-    
     report_lines = []
     report_lines.append("📺 【智能告警修复报告】")
     report_lines.append("")
     report_lines.append(f"⏰ 执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report_lines.append("")
     
-    # 扫描统计
     report_lines.append("📊 本次执行统计:")
-    report_lines.append(f"  • 扫描告警: {len(alerts)} 个")
-    report_lines.append(f"  • 修复成功: {len(completed_tasks)} 个")
-    report_lines.append(f"  • 修复失败: {len(failed_tasks)} 个")
-    report_lines.append(f"  • 人工处理: {len(manual_review_tasks)} 个")
+    report_lines.append(f"  • 初始去重告警: {summary['initial_alert_count']} 个")
+    report_lines.append(f"  • 复验后已消失: {summary['resolved_count']} 个")
+    report_lines.append(f"  • 复验后仍存在: {summary['remaining_count']} 个")
+    report_lines.append(f"  • 需人工处理: {summary['manual_review_count']} 个")
     report_lines.append(f"  • 复验启动: {len(fuyan_results)} 个")
     report_lines.append("")
     
-    # 剩余告警
-    report_lines.append(f"📋 当前未处理告警表: {remaining_count} 个")
+    report_lines.append(
+        f"📋 当前未处理告警表: {len(summary['post_fuyan_remaining_tables'])} 个"
+    )
     report_lines.append("")
     
-    # 成功任务
-    if completed_tasks:
-        report_lines.append("✅ 【修复成功任务】")
-        for task in completed_tasks:
+    if summary['resolved_tasks']:
+        report_lines.append("✅ 【复验后已消失】")
+        for task in summary['resolved_tasks']:
             report_lines.append(f"  • {task['table']}")
             if task.get('end_time'):
                 report_lines.append(f"    完成时间: {task['end_time']}")
         report_lines.append("")
     
-    # 失败任务
-    if failed_tasks:
-        report_lines.append("❌ 【修复失败/超时任务】")
-        for task in failed_tasks:
-            error_msg = task.get('error', '未知错误')
+    if summary['remaining_tasks']:
+        report_lines.append("⚠️ 【复验后仍存在，需人工处理】")
+        for task in summary['remaining_tasks']:
             report_lines.append(f"  • {task['table']}")
-            report_lines.append(f"    原因: {error_msg}")
-        report_lines.append("")
-
-    if manual_review_tasks:
-        report_lines.append("⚠️ 【需人工处理】")
-        for task in manual_review_tasks:
-            report_lines.append(f"  • {task['table']}")
-            report_lines.append(f"    原因: {task.get('error', '需人工处理')}")
+            report_lines.append(f"    原因: {task.get('error', '复验完成后告警仍存在，需人工处理')}")
         report_lines.append("")
     
-    # 未找到工作流的任务
-    not_found_tasks = [a for a in alerts if not any(t['table'] == a['table'] for t in completed_tasks + failed_tasks)]
-    if not_found_tasks:
-        report_lines.append("⚠️ 【未找到工作流(需人工处理)】")
-        for task in not_found_tasks:
-            report_lines.append(f"  • {task['table']}")
-        report_lines.append("")
-    
-    # 复验工作流
     report_lines.append("🔄 【复验工作流状态】")
     for fuyan in fuyan_results:
-        if fuyan.get('status') == 'success':
+        final_status = fuyan.get('final_status')
+        if final_status == 'success':
             report_lines.append(f"  ✅ {fuyan['name']}")
-            if fuyan.get('id'):
-                report_lines.append(f"     实例ID: {fuyan['id']}")
+        elif final_status in ['failed', 'timeout', 'query_failed']:
+            report_lines.append(f"  ❌ {fuyan['name']}")
+            report_lines.append(f"     原因: {fuyan.get('error', final_status)}")
+        elif fuyan.get('status') == 'success':
+            report_lines.append(f"  ⏳ {fuyan['name']}")
+            report_lines.append("     状态: 已启动，等待结果中")
         else:
             report_lines.append(f"  ❌ {fuyan['name']}")
             if fuyan.get('error'):
                 report_lines.append(f"     错误: {fuyan['error']}")
+        if fuyan.get('id'):
+            report_lines.append(f"     实例ID: {fuyan['id']}")
     report_lines.append("")
     
     # 结尾
@@ -911,9 +1016,24 @@ def main():
     
     # 步骤5: 执行复验
     fuyan_results = step5_execute_fuyan(completed_tasks, failed_tasks, alerts)
+
+    summary, final_fuyan_results = evaluate_repair_outcome(
+        alerts=alerts,
+        completed_tasks=completed_tasks,
+        failed_tasks=failed_tasks,
+        manual_review_tasks=manual_review_tasks,
+        fuyan_results=fuyan_results,
+    )
     
     # 步骤6: 保存记录并发送TV报告
-    step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, alerts, manual_review_tasks=manual_review_tasks)
+    step6_save_report(
+        results,
+        completed_tasks,
+        failed_tasks,
+        final_fuyan_results,
+        summary,
+        manual_review_tasks=manual_review_tasks,
+    )
     
     log("\n" + "="*70)
     log("✅ 流程完成")
