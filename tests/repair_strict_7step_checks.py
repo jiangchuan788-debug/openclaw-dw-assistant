@@ -27,6 +27,32 @@ def load_module():
 
 
 class RepairStrict7StepTests(unittest.TestCase):
+    def test_resolve_repair_table_prefers_downstream_warehouse_layer_over_ods(self):
+        module = load_module()
+        row = {
+            "src_db": "ods",
+            "src_tbl": "ods_qsq_erp_biz_report",
+            "dest_db": "dwd",
+            "dest_tbl": "dwd_qsq_erp_biz_report",
+        }
+
+        table_name = module.resolve_repair_table(row)
+
+        self.assertEqual(table_name, "dwd_qsq_erp_biz_report")
+
+    def test_resolve_repair_table_prefers_dest_table_when_both_sides_same_layer(self):
+        module = load_module()
+        row = {
+            "src_db": "dwd",
+            "src_tbl": "dwd_source_example",
+            "dest_db": "dwd",
+            "dest_tbl": "dwd_target_example",
+        }
+
+        table_name = module.resolve_repair_table(row)
+
+        self.assertEqual(table_name, "dwd_target_example")
+
     def test_resolve_alert_dt_prefers_begin_date(self):
         module = load_module()
         row = {
@@ -164,6 +190,42 @@ class RepairStrict7StepTests(unittest.TestCase):
 
         self.assertIn("需人工处理", report)
         self.assertIn("ods_qsq_erp_cpop_settlement_order_procedure", report)
+
+    def test_count_remaining_alert_tables_dedupes_by_resolved_table(self):
+        module = load_module()
+
+        rows = [
+            {
+                "src_db": "ods",
+                "src_tbl": "ods_qsq_erp_biz_report",
+                "dest_db": "dwd",
+                "dest_tbl": "dwd_qsq_erp_biz_report",
+            },
+            {
+                "src_db": "ods",
+                "src_tbl": "ods_qsq_erp_biz_report",
+                "dest_db": "dwd",
+                "dest_tbl": "dwd_qsq_erp_biz_report",
+            },
+            {
+                "src_db": "ods",
+                "src_tbl": "ods_other",
+                "dest_db": "dwd",
+                "dest_tbl": "dwd_other",
+            },
+        ]
+
+        fake_cursor = mock.MagicMock()
+        fake_cursor.fetchall.return_value = rows
+        fake_conn = mock.MagicMock()
+        fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+        fake_db_module = types.ModuleType("alert.db_config")
+        fake_db_module.get_db_connection = mock.MagicMock(return_value=fake_conn)
+
+        with mock.patch.dict(sys.modules, {"alert.db_config": fake_db_module}):
+            count = module.count_remaining_alert_tables()
+
+        self.assertEqual(count, 2)
 
 
 if __name__ == "__main__":

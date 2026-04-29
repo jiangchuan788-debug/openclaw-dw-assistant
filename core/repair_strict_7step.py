@@ -110,6 +110,72 @@ def resolve_alert_dt(row, now=None):
     return now.strftime('%Y-%m-%d')
 
 
+def get_table_layer_priority(db_name):
+    """为不同数仓层级打分，分值越高越优先作为修复目标"""
+    normalized = (db_name or '').strip().lower()
+    priorities = {
+        'ads': 4,
+        'dm': 3,
+        'dwd': 2,
+        'dwb': 2,
+        'ods': 1,
+    }
+    return priorities.get(normalized, 0)
+
+
+def resolve_repair_table(row):
+    """统一决定当前告警应该修复哪张表，尽量优先目标层和下游层"""
+    src_db = row.get('src_db') or ''
+    src_tbl = row.get('src_tbl') or ''
+    dest_db = row.get('dest_db') or ''
+    dest_tbl = row.get('dest_tbl') or ''
+
+    candidates = []
+    if dest_tbl:
+        candidates.append((get_table_layer_priority(dest_db), 1, dest_tbl))
+    if src_tbl:
+        candidates.append((get_table_layer_priority(src_db), 0, src_tbl))
+
+    if not candidates:
+        return ''
+
+    best_priority = max(priority for priority, _, _ in candidates)
+    if best_priority > 0:
+        prioritized = [item for item in candidates if item[0] == best_priority]
+        prioritized.sort(key=lambda item: item[1], reverse=True)
+        return prioritized[0][2]
+
+    return dest_tbl or src_tbl
+
+
+def count_remaining_alert_tables():
+    """统计当前剩余未处理告警的去重表数，口径与扫描阶段保持一致"""
+    from alert.db_config import get_db_connection
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT src_db, src_tbl, dest_db, dest_tbl
+                FROM wattrel_quality_result
+                WHERE result = 1 AND is_repaired = 0
+                  AND created_at >= DATE_SUB(NOW(), INTERVAL 3 DAY)
+                ORDER BY created_at DESC
+            """
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    unique_tables = set()
+    for row in rows:
+        table_name = resolve_repair_table(row)
+        if table_name:
+            unique_tables.add(table_name)
+
+    return len(unique_tables)
+
+
 def step1_scan_alerts():
     """步骤1: 扫描告警"""
     log("="*70)
@@ -132,13 +198,7 @@ def step1_scan_alerts():
             rows = cursor.fetchall()
             
             for row in rows:
-                dest_db = row.get('dest_db') or ''
-                dest_tbl = row.get('dest_tbl') or ''
-                
-                if dest_db.lower() in ['dwd', 'dwb', 'ads'] and dest_tbl:
-                    table_name = dest_tbl
-                else:
-                    table_name = row.get('src_tbl') or ''
+                table_name = resolve_repair_table(row)
                 
                 dt = resolve_alert_dt(row)
                 
@@ -689,19 +749,7 @@ def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts, man
     # 查询当前剩余未处理告警数量
     remaining_count = 0
     try:
-        from alert.db_config import get_db_connection
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            sql = """
-                SELECT COUNT(*) as cnt
-                FROM wattrel_quality_result
-                WHERE result = 1 AND is_repaired = 0
-                AND created_at >= DATE_SUB(NOW(), INTERVAL 3 DAY)
-            """
-            cursor.execute(sql)
-            result = cursor.fetchone()
-            remaining_count = result['cnt'] if result else 0
-        conn.close()
+        remaining_count = count_remaining_alert_tables()
     except Exception as e:
         log(f"  ⚠️ 查询剩余告警数量失败: {e}")
     
@@ -721,7 +769,7 @@ def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts, man
     report_lines.append("")
     
     # 剩余告警
-    report_lines.append(f"📋 当前未处理告警: {remaining_count} 个")
+    report_lines.append(f"📋 当前未处理告警表: {remaining_count} 个")
     report_lines.append("")
     
     # 成功任务
