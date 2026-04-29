@@ -18,7 +18,7 @@ import json
 import os
 import urllib.request
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 # 配置
@@ -27,6 +27,7 @@ DS_BASE = 'http://172.20.0.235:12345/dolphinscheduler'
 PROJECT_CODE = '158514956085248'
 FUYAN_PROJECT_CODE = '158515019231232'
 DS_TOKEN = '72b6ff29a6484039a1ddd3f303973505'
+MANUAL_REVIEW_STATE_FILE = f"{WORKSPACE}/auto_repair_records/manual_review_state.json"
 
 # 复验工作流
 FUYAN_WORKFLOWS = [
@@ -76,6 +77,39 @@ def ds_api_post(endpoint, data):
         return False, {}, str(e)
 
 
+def normalize_to_datetime(value):
+    """将数据库中的时间字段尽量标准化为 datetime"""
+    if not value:
+        return None
+
+    if hasattr(value, 'strftime'):
+        return value
+
+    text = str(value).strip()
+    for pattern in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%Y-%m-%dT%H:%M:%S.%fZ'):
+        try:
+            return datetime.strptime(text, pattern)
+        except ValueError:
+            continue
+    return None
+
+
+def resolve_alert_dt(row, now=None):
+    """解析告警对应的修复 dt，优先 begin，其次 end-1 天，最后兜底当天"""
+    if now is None:
+        now = datetime.now()
+
+    begin_time = normalize_to_datetime(row.get('begin'))
+    if begin_time:
+        return begin_time.strftime('%Y-%m-%d')
+
+    end_time = normalize_to_datetime(row.get('end'))
+    if end_time:
+        return (end_time - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    return now.strftime('%Y-%m-%d')
+
+
 def step1_scan_alerts():
     """步骤1: 扫描告警"""
     log("="*70)
@@ -88,7 +122,7 @@ def step1_scan_alerts():
         conn = get_db_connection()
         with conn.cursor() as cursor:
             sql = """
-                SELECT id, name, src_db, src_tbl, dest_db, dest_tbl, `begin`, diff
+                SELECT id, name, src_db, src_tbl, dest_db, dest_tbl, `begin`, `end`, diff
                 FROM wattrel_quality_result
                 WHERE result = 1 AND is_repaired = 0
                   AND created_at >= DATE_SUB(NOW(), INTERVAL 3 DAY)
@@ -106,11 +140,7 @@ def step1_scan_alerts():
                 else:
                     table_name = row.get('src_tbl') or ''
                 
-                begin_time = row.get('begin')
-                if begin_time:
-                    dt = begin_time.strftime('%Y-%m-%d') if hasattr(begin_time, 'strftime') else str(begin_time).split()[0]
-                else:
-                    dt = datetime.now().strftime('%Y-%m-%d')
+                dt = resolve_alert_dt(row)
                 
                 alerts.append({
                     'id': row['id'],
@@ -277,6 +307,84 @@ def step2_find_locations(alerts):
     
     log(f"\n📊 找到 {found_count}/{len(alerts)} 个工作流")
     return tasks
+
+
+def load_manual_review_state():
+    """加载人工处理策略状态"""
+    if not os.path.exists(MANUAL_REVIEW_STATE_FILE):
+        return {}
+
+    try:
+        with open(MANUAL_REVIEW_STATE_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        log(f"⚠️ 读取人工处理状态失败: {e}")
+        return {}
+
+
+def save_manual_review_state(state):
+    """保存人工处理策略状态"""
+    os.makedirs(os.path.dirname(MANUAL_REVIEW_STATE_FILE), exist_ok=True)
+    with open(MANUAL_REVIEW_STATE_FILE, 'w') as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+
+
+def is_suspected_redundant_data(task):
+    """根据 diff 判断是否为疑似冗余数据告警"""
+    diff = task.get('diff')
+    if diff in (None, ''):
+        return False
+
+    try:
+        return float(diff) < 0
+    except (TypeError, ValueError):
+        return False
+
+
+def apply_repair_strategy(tasks, strategy_state):
+    """应用修复策略：疑似冗余数据仅允许自动重跑一次"""
+    runnable_tasks = []
+    manual_review_tasks = []
+
+    for task in tasks:
+        if not is_suspected_redundant_data(task):
+            runnable_tasks.append(task)
+            continue
+
+        table_state = strategy_state.get(task['table'], {}).get(task['dt'], {})
+        if table_state.get('redundant_retry_done'):
+            manual_task = dict(task)
+            manual_task['status'] = 'skipped_manual_review'
+            manual_task['error'] = '疑似冗余数据，已重跑一次仍未恢复，转人工处理'
+            manual_review_tasks.append(manual_task)
+        else:
+            runnable_tasks.append(task)
+
+    return runnable_tasks, manual_review_tasks
+
+
+def record_redundant_retry_attempt(strategy_state, completed_tasks):
+    """记录疑似冗余数据告警的首次自动重跑尝试"""
+    for task in completed_tasks:
+        if not is_suspected_redundant_data(task):
+            continue
+
+        table_state = strategy_state.setdefault(task['table'], {})
+        dt_state = table_state.setdefault(task['dt'], {})
+        dt_state['redundant_retry_done'] = True
+        dt_state.setdefault('manual_review_required', False)
+        dt_state['last_completed_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def record_manual_review_tasks(strategy_state, manual_review_tasks):
+    """记录需要人工处理的任务状态"""
+    for task in manual_review_tasks:
+        table_state = strategy_state.setdefault(task['table'], {})
+        dt_state = table_state.setdefault(task['dt'], {})
+        dt_state['redundant_retry_done'] = True
+        dt_state['manual_review_required'] = True
+        dt_state['reason'] = task.get('error', '需人工处理')
+        dt_state['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
 def step3_start_repair(tasks):
@@ -541,8 +649,11 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
     return fuyan_results
 
 
-def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, alerts):
+def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, alerts, manual_review_tasks=None):
     """步骤6: 保存记录并发送TV报告"""
+    if manual_review_tasks is None:
+        manual_review_tasks = []
+
     log("\n" + "="*70)
     log("【步骤6】保存记录")
     log("="*70)
@@ -557,20 +668,23 @@ def step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, ale
             'results': results,
             'completed_tasks': completed_tasks,
             'failed_tasks': failed_tasks,
+            'manual_review_tasks': manual_review_tasks,
             'fuyan_results': fuyan_results,
         }, f, indent=2, ensure_ascii=False)
     
     log(f"  ✅ 记录已保存: {detail_file}")
     
     # 生成TV报告内容
-    tv_report = generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts)
+    tv_report = generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts, manual_review_tasks=manual_review_tasks)
     
     # 发送TV报告到钉钉
     send_tv_report_to_dingtalk(tv_report)
 
 
-def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts):
+def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts, manual_review_tasks=None):
     """生成TV格式报告"""
+    if manual_review_tasks is None:
+        manual_review_tasks = []
     
     # 查询当前剩余未处理告警数量
     remaining_count = 0
@@ -602,6 +716,7 @@ def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts):
     report_lines.append(f"  • 扫描告警: {len(alerts)} 个")
     report_lines.append(f"  • 修复成功: {len(completed_tasks)} 个")
     report_lines.append(f"  • 修复失败: {len(failed_tasks)} 个")
+    report_lines.append(f"  • 人工处理: {len(manual_review_tasks)} 个")
     report_lines.append(f"  • 复验启动: {len(fuyan_results)} 个")
     report_lines.append("")
     
@@ -625,6 +740,13 @@ def generate_tv_report(completed_tasks, failed_tasks, fuyan_results, alerts):
             error_msg = task.get('error', '未知错误')
             report_lines.append(f"  • {task['table']}")
             report_lines.append(f"    原因: {error_msg}")
+        report_lines.append("")
+
+    if manual_review_tasks:
+        report_lines.append("⚠️ 【需人工处理】")
+        for task in manual_review_tasks:
+            report_lines.append(f"  • {task['table']}")
+            report_lines.append(f"    原因: {task.get('error', '需人工处理')}")
         report_lines.append("")
     
     # 未找到工作流的任务
@@ -720,15 +842,30 @@ def main():
     
     # 步骤2: 查找工作流
     tasks = step2_find_locations(alerts)
+
+    # 策略判断：疑似冗余数据告警首次允许重跑，后续转人工处理
+    strategy_state = load_manual_review_state()
+    runnable_tasks, manual_review_tasks = apply_repair_strategy(tasks, strategy_state)
     
     # 步骤3-4: 分批启动修复并动态监控（最多并行5个）
-    results, completed_tasks, failed_tasks = execute_repairs_in_batches(tasks, max_parallel=5)
+    results, completed_tasks, failed_tasks = execute_repairs_in_batches(runnable_tasks, max_parallel=5)
+
+    record_redundant_retry_attempt(strategy_state, completed_tasks)
+    record_manual_review_tasks(strategy_state, manual_review_tasks)
+    save_manual_review_state(strategy_state)
+
+    if manual_review_tasks:
+        log("\n⚠️ 以下任务疑似冗余数据，已转人工处理，不再自动重跑:")
+        for task in manual_review_tasks:
+            log(f"  - {task['table']}: {task['error']}")
+
+    results.extend(manual_review_tasks)
     
     # 步骤5: 执行复验
     fuyan_results = step5_execute_fuyan(completed_tasks, failed_tasks, alerts)
     
     # 步骤6: 保存记录并发送TV报告
-    step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, alerts)
+    step6_save_report(results, completed_tasks, failed_tasks, fuyan_results, alerts, manual_review_tasks=manual_review_tasks)
     
     log("\n" + "="*70)
     log("✅ 流程完成")
