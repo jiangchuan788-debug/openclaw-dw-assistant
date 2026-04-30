@@ -406,6 +406,11 @@ def is_suspected_redundant_data(task):
         return False
 
 
+def build_redundant_data_manual_review_reason():
+    """构造疑似冗余/底层少数场景的人工处理提示"""
+    return '疑似当前层数据多于底层，重跑一次后仍未恢复，建议检查底层是否需要删数，并人工判断修复'
+
+
 def apply_repair_strategy(tasks, strategy_state):
     """应用修复策略：疑似冗余数据仅允许自动重跑一次"""
     runnable_tasks = []
@@ -420,7 +425,7 @@ def apply_repair_strategy(tasks, strategy_state):
         if table_state.get('redundant_retry_done'):
             manual_task = dict(task)
             manual_task['status'] = 'skipped_manual_review'
-            manual_task['error'] = '疑似冗余数据，已重跑一次仍未恢复，转人工处理'
+            manual_task['error'] = build_redundant_data_manual_review_reason()
             manual_review_tasks.append(manual_task)
         else:
             runnable_tasks.append(task)
@@ -811,7 +816,10 @@ def summarize_repair_outcome(alerts, completed_tasks, failed_tasks, manual_revie
         if table in manual_by_table:
             remaining_task.update(manual_by_table[table])
         remaining_task['result'] = 'manual_review'
-        remaining_task.setdefault('error', '复验完成后告警仍存在，需人工处理')
+        if is_suspected_redundant_data(remaining_task):
+            remaining_task.setdefault('error', build_redundant_data_manual_review_reason())
+        else:
+            remaining_task.setdefault('error', '复验完成后告警仍存在，需人工处理')
         remaining_tasks.append(remaining_task)
 
     return {

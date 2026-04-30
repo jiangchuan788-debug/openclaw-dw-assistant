@@ -168,7 +168,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(runnable, [])
         self.assertEqual(len(manual_review), 1)
         self.assertEqual(manual_review[0]["status"], "skipped_manual_review")
-        self.assertIn("人工处理", manual_review[0]["error"])
+        self.assertIn("底层是否需要删数", manual_review[0]["error"])
 
     def test_generate_tv_report_lists_manual_review_items(self):
         module = load_module()
@@ -177,11 +177,12 @@ class RepairStrict7StepTests(unittest.TestCase):
             "resolved_count": 0,
             "remaining_count": 1,
             "manual_review_count": 1,
+            "rerun_tasks": [],
             "resolved_tasks": [],
             "remaining_tasks": [
                 {
                     "table": "ods_qsq_erp_cpop_settlement_order_procedure",
-                    "error": "疑似冗余数据，已重跑一次仍未恢复，转人工处理",
+                    "error": "疑似当前层数据多于底层，重跑一次后仍未恢复，建议检查底层是否需要删数，并人工判断修复",
                 }
             ],
             "post_fuyan_remaining_tables": {"ods_qsq_erp_cpop_settlement_order_procedure"},
@@ -192,6 +193,7 @@ class RepairStrict7StepTests(unittest.TestCase):
 
         self.assertIn("需人工处理", report)
         self.assertIn("ods_qsq_erp_cpop_settlement_order_procedure", report)
+        self.assertIn("底层是否需要删数", report)
 
     def test_count_remaining_alert_tables_dedupes_by_resolved_table(self):
         module = load_module()
@@ -268,6 +270,25 @@ class RepairStrict7StepTests(unittest.TestCase):
             ["dwd_fox_call_history", "dwd_asset_biz_report"],
         )
 
+    def test_summarize_repair_outcome_marks_redundant_remaining_task_with_delete_hint(self):
+        module = load_module()
+        alerts = [{"table": "dwd_mkt_sms_cost_monthly", "dt": "2026-04-29", "diff": -49}]
+        completed_tasks = [{"table": "dwd_mkt_sms_cost_monthly", "dt": "2026-04-29", "diff": -49}]
+        failed_tasks = []
+        manual_review_tasks = []
+        remaining_tables = {"dwd_mkt_sms_cost_monthly"}
+
+        summary = module.summarize_repair_outcome(
+            alerts=alerts,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            manual_review_tasks=manual_review_tasks,
+            remaining_tables=remaining_tables,
+        )
+
+        self.assertEqual(summary["remaining_count"], 1)
+        self.assertIn("底层是否需要删数", summary["remaining_tasks"][0]["error"])
+
     def test_generate_tv_report_describes_resolved_and_manual_review_after_fuyan(self):
         module = load_module()
         summary = {
@@ -296,7 +317,7 @@ class RepairStrict7StepTests(unittest.TestCase):
                 {
                     "table": "dwd_asset_biz_report",
                     "dt": "2026-04-21",
-                    "error": "复验完成后告警仍存在，需人工处理",
+                    "error": "疑似当前层数据多于底层，重跑一次后仍未恢复，建议检查底层是否需要删数，并人工判断修复",
                 }
             ],
             "post_fuyan_remaining_tables": {"dwd_asset_biz_report"},
@@ -317,7 +338,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertIn("实例ID: 806136", report)
         self.assertIn("dwd_fox_call_history", report)
         self.assertIn("dwd_asset_biz_report", report)
-        self.assertIn("复验完成后告警仍存在，需人工处理", report)
+        self.assertIn("底层是否需要删数", report)
 
     def test_evaluate_repair_outcome_queries_remaining_tables_after_fuyan_wait(self):
         module = load_module()
