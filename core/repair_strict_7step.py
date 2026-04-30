@@ -784,11 +784,19 @@ def summarize_repair_outcome(alerts, completed_tasks, failed_tasks, manual_revie
     failed_by_table = {item['table']: item for item in failed_tasks if item.get('table')}
     manual_by_table = {item['table']: item for item in manual_review_tasks if item.get('table')}
 
+    rerun_tasks = []
     resolved_tasks = []
     remaining_tasks = []
 
     for alert in initial_alerts:
         table = alert['table']
+        if table in completed_by_table or table in failed_by_table:
+            rerun_task = dict(alert)
+            rerun_task.update(completed_by_table.get(table, {}))
+            if table in failed_by_table:
+                rerun_task.update(failed_by_table[table])
+            rerun_tasks.append(rerun_task)
+
         if table not in remaining_tables:
             resolved_task = dict(alert)
             resolved_task.update(completed_by_table.get(table, {}))
@@ -811,6 +819,7 @@ def summarize_repair_outcome(alerts, completed_tasks, failed_tasks, manual_revie
         'resolved_count': len(resolved_tasks),
         'remaining_count': len(remaining_tasks),
         'manual_review_count': len(remaining_tasks),
+        'rerun_tasks': rerun_tasks,
         'resolved_tasks': resolved_tasks,
         'remaining_tasks': remaining_tasks,
         'post_fuyan_remaining_tables': set(remaining_tables),
@@ -888,6 +897,18 @@ def generate_tv_report(summary, fuyan_results):
         f"📋 当前未处理告警表: {len(summary['post_fuyan_remaining_tables'])} 个"
     )
     report_lines.append("")
+
+    if summary.get('rerun_tasks'):
+        report_lines.append("🔁 【本次已重跑任务】")
+        for task in summary['rerun_tasks']:
+            report_lines.append(f"  • {task['table']}")
+            if task.get('instance_id'):
+                report_lines.append(f"    实例ID: {task['instance_id']}")
+            if task.get('end_time'):
+                report_lines.append(f"    完成时间: {task['end_time']}")
+            elif task.get('error'):
+                report_lines.append(f"    结果: {task['error']}")
+        report_lines.append("")
     
     if summary['resolved_tasks']:
         report_lines.append("✅ 【复验后已消失】")

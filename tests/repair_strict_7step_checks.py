@@ -263,6 +263,10 @@ class RepairStrict7StepTests(unittest.TestCase):
             ["dwd_asset_biz_report"],
         )
         self.assertEqual(summary["manual_review_count"], 1)
+        self.assertEqual(
+            [item["table"] for item in summary["rerun_tasks"]],
+            ["dwd_fox_call_history", "dwd_asset_biz_report"],
+        )
 
     def test_generate_tv_report_describes_resolved_and_manual_review_after_fuyan(self):
         module = load_module()
@@ -271,6 +275,20 @@ class RepairStrict7StepTests(unittest.TestCase):
             "resolved_count": 1,
             "remaining_count": 1,
             "manual_review_count": 1,
+            "rerun_tasks": [
+                {
+                    "table": "dwd_fox_call_history",
+                    "dt": "2026-04-21",
+                    "instance_id": 806135,
+                    "end_time": "2026-04-29 14:05:14",
+                },
+                {
+                    "table": "dwd_asset_biz_report",
+                    "dt": "2026-04-21",
+                    "instance_id": 806136,
+                    "end_time": "2026-04-29 14:05:03",
+                },
+            ],
             "resolved_tasks": [
                 {"table": "dwd_fox_call_history", "dt": "2026-04-21"}
             ],
@@ -294,6 +312,9 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertIn("复验后已消失: 1 个", report)
         self.assertIn("复验后仍存在: 1 个", report)
         self.assertIn("当前未处理告警表: 1 个", report)
+        self.assertIn("本次已重跑任务", report)
+        self.assertIn("实例ID: 806135", report)
+        self.assertIn("实例ID: 806136", report)
         self.assertIn("dwd_fox_call_history", report)
         self.assertIn("dwd_asset_biz_report", report)
         self.assertIn("复验完成后告警仍存在，需人工处理", report)
