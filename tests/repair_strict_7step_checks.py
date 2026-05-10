@@ -83,6 +83,70 @@ class RepairStrict7StepTests(unittest.TestCase):
 
         self.assertEqual(dt, "2026-04-29")
 
+    def test_step1_scan_alerts_marks_out_of_window_alert_as_manual_review(self):
+        module = load_module()
+        rows = [
+            {
+                "id": 1,
+                "name": "old alert",
+                "src_db": "dwd",
+                "src_tbl": "dwd_old_table",
+                "dest_db": "dwd",
+                "dest_tbl": "dwd_old_table",
+                "begin": datetime(2026, 4, 20, 0, 0, 0),
+                "end": datetime(2026, 4, 21, 0, 0, 0),
+                "diff": 1,
+            }
+        ]
+
+        fake_cursor = mock.MagicMock()
+        fake_cursor.fetchall.return_value = rows
+        fake_conn = mock.MagicMock()
+        fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+        fake_db_module = types.ModuleType("alert.db_config")
+        fake_db_module.get_db_connection = mock.MagicMock(return_value=fake_conn)
+
+        with mock.patch.dict(sys.modules, {"alert.db_config": fake_db_module}), \
+            mock.patch.object(module, "log"):
+            alerts = module.step1_scan_alerts(now=datetime(2026, 5, 10, 10, 0, 0))
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["table"], "dwd_old_table")
+        self.assertEqual(alerts[0]["status"], "skipped_out_of_window")
+
+    def test_get_remaining_alert_tables_excludes_out_of_window_rows_by_begin_end(self):
+        module = load_module()
+        rows = [
+            {
+                "src_db": "ods",
+                "src_tbl": "ods_long_window_table",
+                "dest_db": "dwd",
+                "dest_tbl": "dwd_long_window_table",
+                "begin": datetime(2026, 2, 8, 0, 0, 0),
+                "end": datetime(2026, 5, 9, 0, 0, 0),
+            },
+            {
+                "src_db": "ods",
+                "src_tbl": "ods_recent_table",
+                "dest_db": "dwd",
+                "dest_tbl": "dwd_recent_table",
+                "begin": datetime(2026, 5, 9, 0, 0, 0),
+                "end": datetime(2026, 5, 10, 0, 0, 0),
+            },
+        ]
+
+        fake_cursor = mock.MagicMock()
+        fake_cursor.fetchall.return_value = rows
+        fake_conn = mock.MagicMock()
+        fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+        fake_db_module = types.ModuleType("alert.db_config")
+        fake_db_module.get_db_connection = mock.MagicMock(return_value=fake_conn)
+
+        with mock.patch.dict(sys.modules, {"alert.db_config": fake_db_module}):
+            tables = module.get_remaining_alert_tables(now=datetime(2026, 5, 10, 10, 0, 0))
+
+        self.assertEqual(tables, {"dwd_recent_table"})
+
     def test_execute_repairs_in_batches_limits_parallel_work_to_five(self):
         module = load_module()
         tasks = [{"table": f"table_{idx}", "dt": "2026-04-26"} for idx in range(12)]
@@ -288,6 +352,70 @@ class RepairStrict7StepTests(unittest.TestCase):
 
         self.assertEqual(summary["remaining_count"], 1)
         self.assertIn("底层是否需要删数", summary["remaining_tasks"][0]["error"])
+
+    def test_summarize_repair_outcome_keeps_manual_review_task_as_remaining_when_no_remaining_tables(self):
+        module = load_module()
+        alerts = [{"table": "dwd_user_coupon", "dt": "2026-04-29"}]
+        completed_tasks = []
+        failed_tasks = []
+        manual_review_tasks = [
+            {
+                "table": "dwd_user_coupon",
+                "dt": "2026-04-29",
+                "status": "skipped_manual_review",
+                "error": "需人工处理",
+            }
+        ]
+
+        summary = module.summarize_repair_outcome(
+            alerts=alerts,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            manual_review_tasks=manual_review_tasks,
+            remaining_tables=set(),
+        )
+
+        self.assertEqual(summary["resolved_count"], 0)
+        self.assertEqual(summary["remaining_count"], 1)
+        self.assertEqual(summary["remaining_tasks"][0]["table"], "dwd_user_coupon")
+
+    def test_main_skips_fuyan_when_no_repairs_were_started(self):
+        module = load_module()
+        alerts = [{"table": "dwd_fox_call_history", "dt": "2026-04-21"}]
+        unresolved_tables = {"dwd_fox_call_history"}
+
+        with mock.patch.object(module, "step1_scan_alerts", return_value=alerts), mock.patch.object(
+            module, "step2_find_locations", return_value=[{"table": "dwd_fox_call_history", "dt": "2026-04-21"}]
+        ), mock.patch.object(
+            module, "load_manual_review_state", return_value={}
+        ), mock.patch.object(
+            module, "apply_repair_strategy", return_value=([{"table": "dwd_fox_call_history", "dt": "2026-04-21"}], [])
+        ), mock.patch.object(
+            module, "execute_repairs_in_batches", return_value=([{"table": "dwd_fox_call_history"}], [], [])
+        ), mock.patch.object(
+            module, "record_redundant_retry_attempt"
+        ), mock.patch.object(
+            module, "record_manual_review_tasks"
+        ), mock.patch.object(
+            module, "save_manual_review_state"
+        ), mock.patch.object(
+            module, "step5_execute_fuyan"
+        ) as mock_step5, mock.patch.object(
+            module, "evaluate_repair_outcome"
+        ) as mock_evaluate, mock.patch.object(
+            module, "get_remaining_alert_tables", return_value=unresolved_tables
+        ), mock.patch.object(
+            module, "step6_save_report"
+        ) as mock_step6, mock.patch.object(module, "log"):
+            module.main()
+
+        mock_step5.assert_not_called()
+        mock_evaluate.assert_not_called()
+        summary = mock_step6.call_args[0][4]
+        final_fuyan_results = mock_step6.call_args[0][3]
+        self.assertEqual(final_fuyan_results, [])
+        self.assertEqual(summary["remaining_count"], 1)
+        self.assertEqual(summary["resolved_count"], 0)
 
     def test_generate_tv_report_describes_resolved_and_manual_review_after_fuyan(self):
         module = load_module()

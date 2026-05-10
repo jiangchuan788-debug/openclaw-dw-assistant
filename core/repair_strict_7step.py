@@ -110,6 +110,40 @@ def resolve_alert_dt(row, now=None):
     return now.strftime('%Y-%m-%d')
 
 
+def get_alert_window_status(row, now=None, lookback_days=7):
+    """根据告警 begin/end 窗口判断是否超出自动修复范围。"""
+    if now is None:
+        now = datetime.now()
+
+    lookback_start = now.date() - timedelta(days=lookback_days)
+    begin_time = normalize_to_datetime(row.get('begin'))
+    end_time = normalize_to_datetime(row.get('end'))
+    begin_date = begin_time.date() if begin_time else None
+    end_date = end_time.date() if end_time else None
+
+    status = {
+        'is_out_of_window': False,
+        'reason': '',
+        'begin_date': begin_date.isoformat() if begin_date else None,
+        'end_date': end_date.isoformat() if end_date else None,
+        'lookback_start': lookback_start.isoformat(),
+    }
+
+    if begin_date and begin_date < lookback_start:
+        status['is_out_of_window'] = True
+        status['reason'] = 'begin_before_lookback'
+        return status
+
+    if begin_date and end_date:
+        covered_days = max((end_date - begin_date).days, 0)
+        if covered_days > lookback_days:
+            status['is_out_of_window'] = True
+            status['reason'] = 'window_span_exceeded'
+            return status
+
+    return status
+
+
 def get_table_layer_priority(db_name):
     """为不同数仓层级打分，分值越高越优先作为修复目标"""
     normalized = (db_name or '').strip().lower()
@@ -153,15 +187,18 @@ def count_remaining_alert_tables():
     return len(get_remaining_alert_tables())
 
 
-def get_remaining_alert_tables():
+def get_remaining_alert_tables(now=None):
     """查询当前数据库中仍未处理的去重告警表集合"""
+    if now is None:
+        now = datetime.now()
+
     from alert.db_config import get_db_connection
 
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
             sql = """
-                SELECT src_db, src_tbl, dest_db, dest_tbl
+                SELECT src_db, src_tbl, dest_db, dest_tbl, `begin`, `end`
                 FROM wattrel_quality_result
                 WHERE result = 1 AND is_repaired = 0
                   AND created_at >= DATE_SUB(NOW(), INTERVAL 3 DAY)
@@ -174,6 +211,9 @@ def get_remaining_alert_tables():
 
     unique_tables = set()
     for row in rows:
+        window_status = get_alert_window_status(row, now=now)
+        if window_status['is_out_of_window']:
+            continue
         table_name = resolve_repair_table(row)
         if table_name:
             unique_tables.add(table_name)
@@ -181,8 +221,11 @@ def get_remaining_alert_tables():
     return unique_tables
 
 
-def step1_scan_alerts():
+def step1_scan_alerts(now=None):
     """步骤1: 扫描告警"""
+    if now is None:
+        now = datetime.now()
+
     log("="*70)
     log("【步骤1】扫描告警")
     log("="*70)
@@ -205,15 +248,30 @@ def step1_scan_alerts():
             for row in rows:
                 table_name = resolve_repair_table(row)
                 
-                dt = resolve_alert_dt(row)
-                
-                alerts.append({
+                dt = resolve_alert_dt(row, now=now)
+                window_status = get_alert_window_status(row, now=now)
+                alert = {
                     'id': row['id'],
                     'table': table_name,
                     'dt': dt,
                     'name': row.get('name', ''),
                     'diff': row.get('diff', '')
-                })
+                }
+                if window_status['is_out_of_window']:
+                    begin_text = window_status.get('begin_date') or '未知'
+                    end_text = window_status.get('end_date') or '未知'
+                    alert['status'] = 'skipped_out_of_window'
+                    if window_status['reason'] == 'begin_before_lookback':
+                        alert['error'] = (
+                            f"告警窗口 begin={begin_text}, end={end_text}，"
+                            f"begin 早于自动修复窗口起点 {window_status['lookback_start']}，转人工处理"
+                        )
+                    else:
+                        alert['error'] = (
+                            f"告警窗口 begin={begin_text}, end={end_text}，"
+                            "覆盖天数超过自动修复窗口7天，转人工处理"
+                        )
+                alerts.append(alert)
         
         conn.close()
         log(f"✅ 查询到 {len(alerts)} 条异常记录")
@@ -235,6 +293,10 @@ def step1_scan_alerts():
         log(f"  ✅ {alert['table']} (dt={alert['dt']})")
     if len(unique_alerts) > 5:
         log(f"  ... 还有 {len(unique_alerts)-5} 个")
+
+    out_of_window_count = sum(1 for alert in unique_alerts if alert.get('status') == 'skipped_out_of_window')
+    if out_of_window_count:
+        log(f"  ⚠️ 超出7天自动修复窗口: {out_of_window_count} 个")
     
     return unique_alerts
 
@@ -802,6 +864,17 @@ def summarize_repair_outcome(alerts, completed_tasks, failed_tasks, manual_revie
                 rerun_task.update(failed_by_table[table])
             rerun_tasks.append(rerun_task)
 
+        if table in manual_by_table:
+            remaining_task = dict(alert)
+            remaining_task.update(completed_by_table.get(table, {}))
+            if table in failed_by_table:
+                remaining_task.update(failed_by_table[table])
+            remaining_task.update(manual_by_table[table])
+            remaining_task['result'] = 'manual_review'
+            remaining_task.setdefault('error', '需人工处理')
+            remaining_tasks.append(remaining_task)
+            continue
+
         if table not in remaining_tables:
             resolved_task = dict(alert)
             resolved_task.update(completed_by_table.get(table, {}))
@@ -1027,7 +1100,18 @@ def main():
 
     # 策略判断：疑似冗余数据告警首次允许重跑，后续转人工处理
     strategy_state = load_manual_review_state()
-    runnable_tasks, manual_review_tasks = apply_repair_strategy(tasks, strategy_state)
+    out_of_window_tasks = []
+    candidate_tasks = []
+    for task in tasks:
+        if task.get('status') == 'skipped_out_of_window':
+            manual_task = dict(task)
+            manual_task['status'] = 'skipped_manual_review'
+            out_of_window_tasks.append(manual_task)
+        else:
+            candidate_tasks.append(task)
+
+    runnable_tasks, manual_review_tasks = apply_repair_strategy(candidate_tasks, strategy_state)
+    manual_review_tasks = out_of_window_tasks + manual_review_tasks
     
     # 步骤3-4: 分批启动修复并动态监控（最多并行5个）
     results, completed_tasks, failed_tasks = execute_repairs_in_batches(runnable_tasks, max_parallel=5)
@@ -1037,22 +1121,34 @@ def main():
     save_manual_review_state(strategy_state)
 
     if manual_review_tasks:
-        log("\n⚠️ 以下任务疑似冗余数据，已转人工处理，不再自动重跑:")
+        log("\n⚠️ 以下任务已转人工处理，不再自动重跑:")
         for task in manual_review_tasks:
             log(f"  - {task['table']}: {task['error']}")
 
     results.extend(manual_review_tasks)
     
-    # 步骤5: 执行复验
-    fuyan_results = step5_execute_fuyan(completed_tasks, failed_tasks, alerts)
+    if completed_tasks:
+        # 步骤5: 执行复验
+        fuyan_results = step5_execute_fuyan(completed_tasks, failed_tasks, alerts)
 
-    summary, final_fuyan_results = evaluate_repair_outcome(
-        alerts=alerts,
-        completed_tasks=completed_tasks,
-        failed_tasks=failed_tasks,
-        manual_review_tasks=manual_review_tasks,
-        fuyan_results=fuyan_results,
-    )
+        summary, final_fuyan_results = evaluate_repair_outcome(
+            alerts=alerts,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            manual_review_tasks=manual_review_tasks,
+            fuyan_results=fuyan_results,
+        )
+    else:
+        log("\n⚠️ 本次没有成功启动并完成的修复任务，跳过复验和复验回查")
+        remaining_tables = get_remaining_alert_tables()
+        summary = summarize_repair_outcome(
+            alerts=alerts,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            manual_review_tasks=manual_review_tasks,
+            remaining_tables=remaining_tables,
+        )
+        final_fuyan_results = []
     
     # 步骤6: 保存记录并发送TV报告
     step6_save_report(
