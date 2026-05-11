@@ -158,26 +158,9 @@ def get_table_layer_priority(db_name):
 
 
 def resolve_repair_table(row):
-    """统一决定当前告警应该修复哪张表，尽量优先目标层和下游层"""
-    src_db = row.get('src_db') or ''
+    """统一决定当前告警展示/修复哪张表，优先使用目标表名。"""
     src_tbl = row.get('src_tbl') or ''
-    dest_db = row.get('dest_db') or ''
     dest_tbl = row.get('dest_tbl') or ''
-
-    candidates = []
-    if dest_tbl:
-        candidates.append((get_table_layer_priority(dest_db), 1, dest_tbl))
-    if src_tbl:
-        candidates.append((get_table_layer_priority(src_db), 0, src_tbl))
-
-    if not candidates:
-        return ''
-
-    best_priority = max(priority for priority, _, _ in candidates)
-    if best_priority > 0:
-        prioritized = [item for item in candidates if item[0] == best_priority]
-        prioritized.sort(key=lambda item: item[1], reverse=True)
-        return prioritized[0][2]
 
     return dest_tbl or src_tbl
 

@@ -27,7 +27,7 @@ def load_module():
 
 
 class RepairStrict7StepTests(unittest.TestCase):
-    def test_resolve_repair_table_prefers_downstream_warehouse_layer_over_ods(self):
+    def test_resolve_repair_table_prefers_dest_table_over_src_table(self):
         module = load_module()
         row = {
             "src_db": "ods",
@@ -52,6 +52,19 @@ class RepairStrict7StepTests(unittest.TestCase):
         table_name = module.resolve_repair_table(row)
 
         self.assertEqual(table_name, "dwd_target_example")
+
+    def test_resolve_repair_table_prefers_dest_table_for_nonstandard_target_layer_name(self):
+        module = load_module()
+        row = {
+            "src_db": "dwd",
+            "src_tbl": "dwd_mkt_sms_cost_monthly",
+            "dest_db": "dwd_sec",
+            "dest_tbl": "dwd_cst_sms_cost_total",
+        }
+
+        table_name = module.resolve_repair_table(row)
+
+        self.assertEqual(table_name, "dwd_cst_sms_cost_total")
 
     def test_resolve_alert_dt_prefers_begin_date(self):
         module = load_module()
