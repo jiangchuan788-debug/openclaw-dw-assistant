@@ -309,6 +309,16 @@ def step2_search_in_workflow(workflow_code, table_name):
     
     search_term = table_name.lower().replace('dwd_', '').replace('dwb_', '').replace('ods_', '')
     tasks = detail.get('taskDefinitionList', [])
+    candidates = []
+
+    def build_candidate(task, task_name):
+        return {
+            'workflow_code': workflow_code,
+            'workflow_name': detail.get('processDefinition', {}).get('name', ''),
+            'task_code': task.get('code'),
+            'task_name': task_name,
+            'task_type': (task.get('taskType') or '').upper(),
+        }
     
     for task in tasks:
         task_name = task.get('name', '')
@@ -321,12 +331,8 @@ def step2_search_in_workflow(workflow_code, table_name):
         
         # 匹配任务名
         if search_term in task_name_lower:
-            return {
-                'workflow_code': workflow_code,
-                'workflow_name': detail.get('processDefinition', {}).get('name', ''),
-                'task_code': task.get('code'),
-                'task_name': task_name
-            }
+            candidates.append(build_candidate(task, task_name))
+            continue
         
         # 匹配SQL
         task_params = task.get('taskParams', '{}')
@@ -338,14 +344,19 @@ def step2_search_in_workflow(workflow_code, table_name):
         
         sql = task_params.get('sql', '').lower()
         if search_term in sql:
-            return {
-                'workflow_code': workflow_code,
-                'workflow_name': detail.get('processDefinition', {}).get('name', ''),
-                'task_code': task.get('code'),
-                'task_name': task_name
-            }
+            candidates.append(build_candidate(task, task_name))
     
-    return None
+    if not candidates:
+        return None
+
+    non_datax_candidates = [
+        candidate for candidate in candidates
+        if candidate.get('task_type') != 'DATAX'
+    ]
+    if non_datax_candidates:
+        return non_datax_candidates[0]
+
+    return candidates[0]
 
 
 def step2_find_locations(alerts):

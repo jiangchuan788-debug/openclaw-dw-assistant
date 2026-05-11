@@ -114,6 +114,34 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(alerts[0]["table"], "dwd_old_table")
         self.assertEqual(alerts[0]["status"], "skipped_out_of_window")
 
+    def test_step2_search_in_workflow_prefers_non_datax_candidate_when_names_conflict(self):
+        module = load_module()
+
+        def fake_ds_api_get(endpoint):
+            if endpoint == "/projects/158514956085248/workflow-definition/wf-1":
+                return True, {
+                    "processDefinition": {"name": "simontang_test"},
+                    "taskDefinitionList": [
+                        {
+                            "code": "task-datax",
+                            "name": "ads_3324_tdtools_match_batch_result",
+                            "taskType": "DATAX",
+                        },
+                        {
+                            "code": "task-shell",
+                            "name": "ads_3324_tdtools_match_batch_result",
+                            "taskType": "SHELL",
+                        },
+                    ],
+                }, ""
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get):
+            result = module.step2_search_in_workflow("wf-1", "ads_3324_tdtools_match_batch_result")
+
+        self.assertEqual(result["task_code"], "task-shell")
+        self.assertEqual(result["task_type"], "SHELL")
+
     def test_get_remaining_alert_tables_excludes_out_of_window_rows_by_begin_end(self):
         module = load_module()
         rows = [
