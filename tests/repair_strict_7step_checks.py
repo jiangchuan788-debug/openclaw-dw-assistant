@@ -142,6 +142,36 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(result["task_code"], "task-shell")
         self.assertEqual(result["task_type"], "SHELL")
 
+    def test_step2_find_locations_preserves_alert_status_and_diff_metadata(self):
+        module = load_module()
+        alerts = [
+            {
+                "id": 1,
+                "table": "dwd_old_table",
+                "dt": "2026-05-02",
+                "diff": -49,
+                "status": "skipped_out_of_window",
+                "error": "超出自动修复窗口",
+            }
+        ]
+
+        with mock.patch.object(
+            module,
+            "step2_search_in_workflow",
+            return_value={
+                "workflow_code": "wf-1",
+                "workflow_name": "DWD",
+                "task_code": "task-1",
+                "task_name": "dwd_old_table",
+            },
+        ), mock.patch.object(module, "log"):
+            tasks = module.step2_find_locations(alerts)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["status"], "skipped_out_of_window")
+        self.assertEqual(tasks[0]["error"], "超出自动修复窗口")
+        self.assertEqual(tasks[0]["diff"], -49)
+
     def test_get_remaining_alert_tables_excludes_out_of_window_rows_by_begin_end(self):
         module = load_module()
         rows = [
@@ -174,6 +204,41 @@ class RepairStrict7StepTests(unittest.TestCase):
             tables = module.get_remaining_alert_tables(now=datetime(2026, 5, 10, 10, 0, 0))
 
         self.assertEqual(tables, {"dwd_recent_table"})
+
+    def test_summarize_repair_outcome_keeps_out_of_window_alert_in_manual_review(self):
+        module = load_module()
+        alerts = [
+            {
+                "id": 1,
+                "table": "dwd_old_table",
+                "dt": "2026-05-02",
+                "status": "skipped_out_of_window",
+                "error": "告警窗口 begin=2026-05-02, end=2026-05-09，begin 早于自动修复窗口起点 2026-05-04，转人工处理",
+            }
+        ]
+        manual_review_tasks = [
+            {
+                "table": "dwd_old_table",
+                "dt": "2026-05-02",
+                "status": "skipped_out_of_window",
+                "error": "告警窗口 begin=2026-05-02, end=2026-05-09，begin 早于自动修复窗口起点 2026-05-04，转人工处理",
+            }
+        ]
+
+        summary = module.summarize_repair_outcome(
+            alerts=alerts,
+            completed_tasks=[],
+            failed_tasks=[],
+            manual_review_tasks=manual_review_tasks,
+            remaining_tables=set(),
+        )
+
+        self.assertEqual(summary["resolved_count"], 0)
+        self.assertEqual(summary["remaining_count"], 1)
+        self.assertEqual(summary["manual_review_count"], 1)
+        self.assertEqual(summary["resolved_tasks"], [])
+        self.assertEqual(summary["remaining_tasks"][0]["table"], "dwd_old_table")
+        self.assertEqual(summary["remaining_tasks"][0]["result"], "manual_review")
 
     def test_execute_repairs_in_batches_limits_parallel_work_to_five(self):
         module = load_module()
