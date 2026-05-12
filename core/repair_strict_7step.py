@@ -101,6 +101,51 @@ def is_workflow_scheduled(workflow_code, schedule_map):
     return str(workflow_code) in schedule_map
 
 
+def get_running_instances_by_workflow(project_code, workflow_code):
+    """查询指定工作流当前是否已有运行中的实例，用于避开调度执行窗口。"""
+    success, data, msg = ds_api_get(
+        f"/projects/{project_code}/workflow-instances?pageNo=1&pageSize=100&stateType=RUNNING_EXECUTION"
+    )
+    if not success:
+        return []
+
+    workflow_code_str = str(workflow_code)
+    matches = []
+    for item in data.get('totalList', []):
+        item_workflow_code = (
+            item.get('processDefinitionCode')
+            or item.get('workflowDefinitionCode')
+            or item.get('definitionCode')
+        )
+        if str(item_workflow_code) == workflow_code_str:
+            matches.append(item)
+    return matches
+
+
+def find_conflicting_running_instance(project_code, workflow_code):
+    """返回会与手动重跑冲突的运行中实例。"""
+    running_instances = get_running_instances_by_workflow(project_code, workflow_code)
+    if not running_instances:
+        return None
+
+    for item in running_instances:
+        command_type = str(item.get('commandType') or '').upper()
+        if command_type == 'SCHEDULER':
+            return item
+    return running_instances[0]
+
+
+def build_conflicting_instance_error(conflict_instance):
+    """为运行冲突场景生成更清晰的人工处理说明。"""
+    instance_id = conflict_instance.get('id', '未知')
+    command_type = conflict_instance.get('commandType') or 'UNKNOWN'
+    state = conflict_instance.get('state') or 'UNKNOWN'
+    return (
+        f"目标工作流已有运行中实例，跳过本次重跑以避开调度冲突 "
+        f"(实例ID: {instance_id}, 启动类型: {command_type}, 状态: {state})"
+    )
+
+
 def normalize_to_datetime(value):
     """将数据库中的时间字段尽量标准化为 datetime"""
     if not value:
@@ -590,6 +635,15 @@ def step3_start_repair(tasks):
         log(f"\n[{i}/{len(tasks)}] {table}")
         log(f"  工作流: {task['workflow_name']}")
         log(f"  任务: {task['task_name']}")
+
+        conflict_instance = find_conflicting_running_instance(PROJECT_CODE, workflow_code)
+        if conflict_instance:
+            error_msg = build_conflicting_instance_error(conflict_instance)
+            log(f"  ⏭️ 跳过启动: {error_msg}")
+            task['status'] = 'failed'
+            task['error'] = error_msg
+            results.append(task)
+            continue
         
         # 启动修复
         schedule_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -937,9 +991,11 @@ def summarize_repair_outcome(alerts, completed_tasks, failed_tasks, manual_revie
             remaining_task.update(manual_by_table[table])
         remaining_task['result'] = 'manual_review'
         if is_suspected_redundant_data(remaining_task):
-            remaining_task.setdefault('error', build_redundant_data_manual_review_reason())
+            if not remaining_task.get('error'):
+                remaining_task['error'] = build_redundant_data_manual_review_reason()
         else:
-            remaining_task.setdefault('error', '复验完成后告警仍存在，需人工处理')
+            if not remaining_task.get('error'):
+                remaining_task['error'] = '复验完成后告警仍存在，需人工处理'
         remaining_tasks.append(remaining_task)
 
     return {

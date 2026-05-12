@@ -359,7 +359,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(summary["remaining_tasks"][0]["table"], "dwd_old_table")
         self.assertEqual(summary["remaining_tasks"][0]["result"], "manual_review")
 
-    def test_execute_repairs_in_batches_limits_parallel_work_to_five(self):
+    def test_execute_repairs_in_batches_limits_parallel_work_to_four(self):
         module = load_module()
         tasks = [{"table": f"table_{idx}", "dt": "2026-04-26"} for idx in range(12)]
         step3_calls = []
@@ -391,20 +391,44 @@ class RepairStrict7StepTests(unittest.TestCase):
         with mock.patch.object(module, "step3_start_repair", side_effect=fake_step3), mock.patch.object(
             module, "step4_wait_and_check", side_effect=fake_step4
         ):
-            results, completed_tasks, failed_tasks = module.execute_repairs_in_batches(tasks, max_parallel=5)
+            results, completed_tasks, failed_tasks = module.execute_repairs_in_batches(tasks, max_parallel=4)
 
         self.assertEqual(
             step3_calls,
             [
-                ["table_0", "table_1", "table_2", "table_3", "table_4"],
-                ["table_5", "table_6", "table_7", "table_8", "table_9"],
-                ["table_10", "table_11"],
+                ["table_0", "table_1", "table_2", "table_3"],
+                ["table_4", "table_5", "table_6", "table_7"],
+                ["table_8", "table_9", "table_10", "table_11"],
             ],
         )
         self.assertEqual(step4_calls, step3_calls)
         self.assertEqual(len(results), 12)
         self.assertEqual(len(completed_tasks), 12)
         self.assertEqual(failed_tasks, [])
+
+    def test_step3_start_repair_skips_when_scheduler_instance_is_running(self):
+        module = load_module()
+        tasks = [
+            {
+                "table": "国内-数仓工作流(H-1)_target",
+                "dt": "2026-05-12",
+                "workflow_code": "wf-hourly",
+                "workflow_name": "国内-数仓工作流(H-1)",
+                "task_code": "task-1",
+                "task_name": "dwd_hourly_target",
+            }
+        ]
+
+        with mock.patch.object(module, "find_conflicting_running_instance", return_value={"id": 321, "commandType": "SCHEDULER", "state": "RUNNING_EXECUTION"}), \
+            mock.patch.object(module, "ds_api_post") as mocked_post, \
+            mock.patch.object(module, "log"), \
+            mock.patch("time.sleep"):
+            results, running_instances = module.step3_start_repair(tasks)
+
+        mocked_post.assert_not_called()
+        self.assertEqual(results[0]["status"], "failed")
+        self.assertIn("运行中实例", results[0]["error"])
+        self.assertEqual(running_instances, [])
 
     def test_apply_repair_strategy_allows_first_retry_for_suspected_redundant_data(self):
         module = load_module()
@@ -590,6 +614,25 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(summary["resolved_count"], 0)
         self.assertEqual(summary["remaining_count"], 1)
         self.assertEqual(summary["remaining_tasks"][0]["table"], "dwd_user_coupon")
+
+    def test_summarize_repair_outcome_fills_default_error_for_failed_remaining_task(self):
+        module = load_module()
+        alerts = [{"table": "dwd_user_individual", "dt": "2026-05-12"}]
+        completed_tasks = [{"table": "dwd_user_individual", "dt": "2026-05-12", "end_time": "2026-05-12 14:12:07"}]
+        failed_tasks = [{"table": "dwd_user_individual", "dt": "2026-05-12", "final_status": "failed", "error": ""}]
+
+        summary = module.summarize_repair_outcome(
+            alerts=alerts,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            manual_review_tasks=[],
+            remaining_tables={"dwd_user_individual"},
+        )
+
+        self.assertEqual(summary["remaining_count"], 1)
+        self.assertEqual(summary["remaining_tasks"][0]["table"], "dwd_user_individual")
+        self.assertEqual(summary["remaining_tasks"][0]["result"], "manual_review")
+        self.assertEqual(summary["remaining_tasks"][0]["error"], "复验完成后告警仍存在，需人工处理")
 
     def test_main_skips_fuyan_when_no_repairs_were_started(self):
         module = load_module()
