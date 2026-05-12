@@ -185,6 +185,112 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(tasks[0]["error"], "超出自动修复窗口")
         self.assertEqual(tasks[0]["diff"], -49)
 
+    def test_step2_find_locations_allows_scheduled_workflow_when_matching_real_task(self):
+        module = load_module()
+        alerts = [{"id": 1, "table": "dwd_fox_chatbot_dialog", "dt": "2026-05-11", "diff": 1}]
+
+        def fake_ds_api_get(endpoint):
+            if endpoint == "/projects/158514956085248/workflow-definition/158514956979200":
+                return True, {
+                    "processDefinition": {"name": "DWD"},
+                    "taskDefinitionList": [
+                        {
+                            "code": "task-real",
+                            "name": "dwd_fox_chatbot_dialog",
+                            "taskType": "SHELL",
+                        }
+                    ],
+                }, ""
+            if endpoint == "/projects/158514956085248/schedules?pageNo=1&pageSize=200":
+                return True, {
+                    "totalList": [
+                        {
+                            "processDefinitionCode": "158514956979200",
+                            "releaseState": "ONLINE",
+                        }
+                    ]
+                }, ""
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get), \
+            mock.patch.object(module, "log"):
+            tasks = module.step2_find_locations(alerts)
+
+        self.assertEqual(tasks[0]["workflow_code"], "158514956979200")
+        self.assertEqual(tasks[0]["workflow_name"], "DWD")
+        self.assertEqual(tasks[0]["task_code"], "task-real")
+
+    def test_step2_find_locations_skips_scheduled_parent_subprocess_match(self):
+        module = load_module()
+        alerts = [{"id": 1, "table": "ods_cash_model_model", "dt": "2026-05-10", "diff": 1}]
+
+        def fake_ds_api_get(endpoint):
+            if endpoint == "/projects/158514956085248/workflow-definition/158514956979200":
+                return True, {
+                    "processDefinition": {"name": "DWD"},
+                    "taskDefinitionList": [
+                        {
+                            "code": "task-parent",
+                            "name": "ods_cash_model_model",
+                            "taskType": "SUB_PROCESS",
+                        }
+                    ],
+                }, ""
+            if endpoint == "/projects/158514956085248/workflow-definition/158514957656064":
+                return True, {
+                    "processDefinition": {"name": "DWD(D-1)"},
+                    "taskDefinitionList": [],
+                }, ""
+            if endpoint == "/projects/158514956085248/workflow-definition/158514958374912":
+                return True, {
+                    "processDefinition": {"name": "国内-数仓工作流(H-1)"},
+                    "taskDefinitionList": [],
+                }, ""
+            if endpoint == "/projects/158514956085248/workflow-definition/158514957337600":
+                return True, {
+                    "processDefinition": {"name": "国内-数仓工作流(D-1)"},
+                    "taskDefinitionList": [],
+                }, ""
+            if endpoint == "/projects/158514956085248/workflow-definition/158514957297664":
+                return True, {
+                    "processDefinition": {"name": "DWB"},
+                    "taskDefinitionList": [],
+                }, ""
+            if endpoint == "/projects/158514956085248/workflow-definition/158514957701120":
+                return True, {
+                    "processDefinition": {"name": "DWB(D-1)"},
+                    "taskDefinitionList": [],
+                }, ""
+            if endpoint == "/projects/158514956085248/workflow-definition/158514957779968":
+                return True, {
+                    "processDefinition": {"name": "DWS"},
+                    "taskDefinitionList": [],
+                }, ""
+            if endpoint == "/projects/158514956085248/workflow-definition/158514958004224":
+                return True, {
+                    "processDefinition": {"name": "DWS(D-1)"},
+                    "taskDefinitionList": [],
+                }, ""
+            if endpoint == "/projects/158514956085248/workflow-definition?pageNo=1&pageSize=100":
+                return True, {"totalList": [], "totalPage": 1}, ""
+            if endpoint == "/projects/158514956085248/schedules?pageNo=1&pageSize=200":
+                return True, {
+                    "totalList": [
+                        {
+                            "processDefinitionCode": "158514956979200",
+                            "releaseState": "ONLINE",
+                        }
+                    ]
+                }, ""
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get), \
+            mock.patch.object(module, "log"):
+            tasks = module.step2_find_locations(alerts)
+
+        self.assertEqual(tasks[0]["workflow_code"], "")
+        self.assertEqual(tasks[0]["workflow_name"], "未找到")
+
     def test_get_remaining_alert_tables_excludes_out_of_window_rows_by_begin_end(self):
         module = load_module()
         rows = [

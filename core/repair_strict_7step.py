@@ -77,6 +77,30 @@ def ds_api_post(endpoint, data):
         return False, {}, str(e)
 
 
+def get_schedule_map():
+    """获取当前项目的调度配置映射，用于识别带定时的工作流。"""
+    schedule_map = {}
+    success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/schedules?pageNo=1&pageSize=200")
+    if not success:
+        return schedule_map
+
+    for item in data.get('totalList', []):
+        process_code = (
+            item.get('processDefinitionCode')
+            or item.get('workflowDefinitionCode')
+            or item.get('definitionCode')
+        )
+        if process_code is None:
+            continue
+        schedule_map[str(process_code)] = item
+    return schedule_map
+
+
+def is_workflow_scheduled(workflow_code, schedule_map):
+    """判断工作流是否挂了定时调度。"""
+    return str(workflow_code) in schedule_map
+
+
 def normalize_to_datetime(value):
     """将数据库中的时间字段尽量标准化为 datetime"""
     if not value:
@@ -342,6 +366,18 @@ def step2_search_in_workflow(workflow_code, table_name):
     return candidates[0]
 
 
+def is_subprocess_task(task_type):
+    normalized = str(task_type or '').strip().upper()
+    return normalized in {'SUB_PROCESS', 'SUB_PROCESS_NODE', 'SUBPROCESS'}
+
+
+def should_block_scheduled_workflow_match(location):
+    """仅当命中的是父工作流里的子流程节点时，才禁止直接启动。"""
+    if not location:
+        return False
+    return is_subprocess_task(location.get('task_type'))
+
+
 def step2_find_locations(alerts):
     """步骤2: 查找工作流位置 - 优化版（缓存工作流列表）"""
     log("\n" + "="*70)
@@ -362,6 +398,7 @@ def step2_find_locations(alerts):
     
     # 缓存所有工作流列表（只获取一次）
     all_workflows = None
+    schedule_map = None
     
     tasks = []
     found_count = 0
@@ -374,9 +411,14 @@ def step2_find_locations(alerts):
         # 先在优先工作流中搜索
         for wf_code, wf_name in priority_workflows:
             result = step2_search_in_workflow(wf_code, table)
-            if result:
-                location = result
-                break
+            if not result:
+                continue
+            if schedule_map is None:
+                schedule_map = get_schedule_map()
+            if is_workflow_scheduled(result['workflow_code'], schedule_map) and should_block_scheduled_workflow_match(result):
+                continue
+            location = result
+            break
         
         # 如果没找到，再搜索所有工作流（使用缓存）
         if not location:
@@ -396,9 +438,14 @@ def step2_find_locations(alerts):
                 # 跳过已在priority中搜索过的工作流
                 if wf_code not in [pw[0] for pw in priority_workflows]:
                     result = step2_search_in_workflow(wf_code, table)
-                    if result:
-                        location = result
-                        break
+                    if not result:
+                        continue
+                    if schedule_map is None:
+                        schedule_map = get_schedule_map()
+                    if is_workflow_scheduled(result['workflow_code'], schedule_map) and should_block_scheduled_workflow_match(result):
+                        continue
+                    location = result
+                    break
         
         if location:
             task = {
