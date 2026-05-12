@@ -16,6 +16,7 @@ from config import auto_load_env
 
 import json
 import os
+import re
 import urllib.request
 import time
 from datetime import datetime, timedelta
@@ -144,6 +145,88 @@ def build_conflicting_instance_error(conflict_instance):
         f"目标工作流已有运行中实例，跳过本次重跑以避开调度冲突 "
         f"(实例ID: {instance_id}, 启动类型: {command_type}, 状态: {state})"
     )
+
+
+def normalize_table_identifier(value):
+    text = str(value or '').strip().lower().strip('`')
+    return text.replace('`', '')
+
+
+def strip_table_prefix(value):
+    normalized = normalize_table_identifier(value)
+    for prefix in ('dwd_', 'dwb_', 'ods_'):
+        if normalized.startswith(prefix):
+            return normalized[len(prefix):]
+    return normalized
+
+
+def is_task_name_match(task_name, table_name):
+    task_name_normalized = normalize_table_identifier(task_name)
+    table_name_normalized = normalize_table_identifier(table_name)
+    stripped_table_name = strip_table_prefix(table_name)
+    return (
+        table_name_normalized == task_name_normalized
+        or stripped_table_name == task_name_normalized
+        or stripped_table_name in task_name_normalized
+    )
+
+
+def sql_targets_table(sql_text, table_name):
+    sql = str(sql_text or '').lower()
+    if not sql:
+        return False
+
+    expected = normalize_table_identifier(table_name)
+    expected_suffix = f".{expected}"
+    patterns = [
+        r"\binsert\s+overwrite\s+table\s+([`a-zA-Z0-9_.]+)",
+        r"\binsert\s+into\s+table\s+([`a-zA-Z0-9_.]+)",
+        r"\binsert\s+into\s+([`a-zA-Z0-9_.]+)",
+        r"\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?([`a-zA-Z0-9_.]+)",
+    ]
+
+    for pattern in patterns:
+        for matched in re.findall(pattern, sql):
+            candidate = normalize_table_identifier(matched)
+            if candidate == expected or candidate.endswith(expected_suffix):
+                return True
+    return False
+
+
+def start_workflow_instance_with_fallbacks(project_code, workflow_code, base_data, dt=None):
+    launched_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    start_params_payloads = [f'[{{"prop":"dt","value":"{dt}"}}]'] if dt else [None]
+    start_attempts = [
+        ('start-workflow-instance', 'workflowDefinitionCode'),
+        ('start-process-instance', 'processDefinitionCode'),
+    ]
+
+    for start_endpoint, code_field in start_attempts:
+        for start_params_payload in start_params_payloads:
+            attempt_data = dict(base_data)
+            attempt_data[code_field] = workflow_code
+            if start_params_payload is not None:
+                attempt_data['startParams'] = start_params_payload
+            attempt_data['scheduleTime'] = launched_at
+            success, result, msg = ds_api_post(
+                f"/projects/{project_code}/executors/{start_endpoint}",
+                attempt_data,
+            )
+            if success:
+                instance_data = result.get('data')
+                if isinstance(instance_data, list):
+                    instance_id = instance_data[0] if instance_data else None
+                else:
+                    instance_id = instance_data
+                if instance_id not in (None, ''):
+                    return True, result, msg, launched_at
+                success = False
+                result = {}
+                msg = '启动接口返回成功但未提供实例ID'
+            if not success:
+                break
+
+    return False, result if 'result' in locals() else {}, msg if 'msg' in locals() else '', launched_at
 
 
 def normalize_to_datetime(value):
@@ -359,7 +442,6 @@ def step2_search_in_workflow(workflow_code, table_name):
     if not success:
         return None
     
-    search_term = table_name.lower().replace('dwd_', '').replace('dwb_', '').replace('ods_', '')
     tasks = detail.get('taskDefinitionList', [])
     candidates = []
 
@@ -382,7 +464,7 @@ def step2_search_in_workflow(workflow_code, table_name):
             continue
         
         # 匹配任务名
-        if search_term in task_name_lower:
+        if is_task_name_match(task_name, table_name):
             candidates.append(build_candidate(task, task_name))
             continue
         
@@ -394,8 +476,8 @@ def step2_search_in_workflow(workflow_code, table_name):
             except:
                 task_params = {}
         
-        sql = task_params.get('sql', '').lower()
-        if search_term in sql:
+        sql = task_params.get('sql', '')
+        if sql_targets_table(sql, table_name):
             candidates.append(build_candidate(task, task_name))
     
     if not candidates:
@@ -646,23 +728,19 @@ def step3_start_repair(tasks):
             continue
         
         # 启动修复
-        schedule_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         data = {
-            'workflowDefinitionCode': workflow_code,
             'startNodeList': task_code,
             'taskDependType': 'TASK_ONLY',
             'failureStrategy': 'CONTINUE',
             'warningType': 'NONE',
             'warningGroupId': 0,
             'execType': 'START_PROCESS',
-            'startParams': f'[{{"prop":"dt","value":"{dt}"}}]',
             'environmentCode': 154818922491872,
             'tenantCode': 'dolphinscheduler',
             'dryRun': 0,
-            'scheduleTime': schedule_time
         }
-        
-        success, result, msg = ds_api_post(f"/projects/{PROJECT_CODE}/executors/start-workflow-instance", data)
+
+        success, result, msg, _ = start_workflow_instance_with_fallbacks(PROJECT_CODE, workflow_code, data, dt=dt)
         
         if success:
             instance_data = result.get('data')
@@ -843,7 +921,8 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
             counts[table] = {}
         counts[table][today] = counts[table].get(today, 0) + 1
         log(f"  📝 {table}: 今日第{counts[table][today]}次")
-    
+
+    os.makedirs(os.path.dirname(record_file), exist_ok=True)
     with open(record_file, 'w') as f:
         json.dump(counts, f, indent=2)
     
@@ -854,9 +933,7 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
     for i, fuyan in enumerate(FUYAN_WORKFLOWS, 1):
         log(f"  [{i}] {fuyan['name']}")
         
-        schedule_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         data = {
-            'workflowDefinitionCode': fuyan['code'],
             'failureStrategy': 'CONTINUE',
             'warningType': 'NONE',
             'warningGroupId': 0,
@@ -864,10 +941,13 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
             'environmentCode': 154818922491872,
             'tenantCode': 'dolphinscheduler',
             'dryRun': 0,
-            'scheduleTime': schedule_time
         }
-        
-        success, result, msg = ds_api_post(f"/projects/{FUYAN_PROJECT_CODE}/executors/start-workflow-instance", data)
+
+        success, result, msg, _ = start_workflow_instance_with_fallbacks(
+            FUYAN_PROJECT_CODE,
+            fuyan['code'],
+            data,
+        )
         if success:
             instance_id = result.get('data')
             if isinstance(instance_id, list) and len(instance_id) > 0:
@@ -875,7 +955,7 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
             log(f"    ✅ 启动成功: {instance_id}")
             fuyan_results.append({'name': fuyan['name'], 'id': instance_id, 'status': 'success'})
         else:
-            error_msg = result.get('msg', '未知错误')
+            error_msg = result.get('msg') or msg or '未知错误'
             log(f"    ❌ 启动失败: {error_msg}")
             fuyan_results.append({'name': fuyan['name'], 'status': 'failed', 'error': error_msg})
     
