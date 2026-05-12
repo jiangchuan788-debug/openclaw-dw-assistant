@@ -808,6 +808,26 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(results[0]["status"], "success")
         self.assertEqual(results[0]["id"], 24680)
 
+    def test_step5_execute_fuyan_skips_blocked_level1_recheck_workflow(self):
+        module = load_module()
+        module.FUYAN_WORKFLOWS = [
+            {"name": "每小时复验1级表数据(D-1)", "code": "wf-l1", "level": "1"},
+        ]
+        module.BLOCKED_FUYAN_WORKFLOW_NAMES = {"每小时复验1级表数据(D-1)"}
+
+        with mock.patch.object(module, "ds_api_post") as post_mock, \
+            mock.patch.object(module, "log"), \
+            mock.patch.object(module.os, "makedirs"), \
+            mock.patch("builtins.open", mock.mock_open()):
+            results = module.step5_execute_fuyan(
+                completed_tasks=[{"table": "dwb_asset_info"}],
+                failed_tasks=[],
+                alerts=[{"table": "dwb_asset_info"}],
+            )
+
+        post_mock.assert_not_called()
+        self.assertEqual(results, [])
+
 
 if __name__ == "__main__":
     unittest.main()

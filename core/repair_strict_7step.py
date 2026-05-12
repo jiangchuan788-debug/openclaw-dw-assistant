@@ -35,6 +35,7 @@ FUYAN_WORKFLOWS = [
     {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296', 'level': 'all'},
     {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456', 'level': '3'},
 ]
+BLOCKED_FUYAN_WORKFLOW_NAMES = {'每小时复验1级表数据(D-1)'}
 
 # 维护任务关键词（排除）
 MAINTENANCE_KEYWORDS = ['补充', '删除', '清理', '修复', '历史', '冗余', '临时', 'test', 'copy', '手插入']
@@ -929,8 +930,18 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
     # 执行复验
     log(f"\n5.2 执行复验工作流...")
     fuyan_results = []
-    
-    for i, fuyan in enumerate(FUYAN_WORKFLOWS, 1):
+
+    available_fuyan_workflows = [
+        fuyan for fuyan in FUYAN_WORKFLOWS
+        if fuyan.get('name') not in BLOCKED_FUYAN_WORKFLOW_NAMES
+    ]
+    if not available_fuyan_workflows:
+        blocked_names = "、".join(sorted(BLOCKED_FUYAN_WORKFLOW_NAMES))
+        if blocked_names:
+            log(f"  ℹ️ 当前集群已禁用以下复验工作流，避免触发循环: {blocked_names}")
+        return []
+
+    for i, fuyan in enumerate(available_fuyan_workflows, 1):
         log(f"  [{i}] {fuyan['name']}")
         
         data = {
