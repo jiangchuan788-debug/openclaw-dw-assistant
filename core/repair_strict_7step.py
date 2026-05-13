@@ -164,12 +164,7 @@ def strip_table_prefix(value):
 def is_task_name_match(task_name, table_name):
     task_name_normalized = normalize_table_identifier(task_name)
     table_name_normalized = normalize_table_identifier(table_name)
-    stripped_table_name = strip_table_prefix(table_name)
-    return (
-        table_name_normalized == task_name_normalized
-        or stripped_table_name == task_name_normalized
-        or stripped_table_name in task_name_normalized
-    )
+    return table_name_normalized == task_name_normalized
 
 
 def sql_targets_table(sql_text, table_name):
@@ -263,36 +258,43 @@ def resolve_alert_dt(row, now=None):
     return now.strftime('%Y-%m-%d')
 
 
-def get_alert_window_status(row, now=None, lookback_days=7):
-    """根据告警 begin/end 窗口判断是否超出自动修复范围。"""
+def get_alert_window_status(row, now=None, lookback_days=8):
+    """根据告警最近一次命中的日期判断是否超出自动修复范围。"""
     if now is None:
         now = datetime.now()
 
     lookback_start = now.date() - timedelta(days=lookback_days)
+    repair_dt_text = resolve_alert_dt(row, now=now)
+    repair_dt = None
+    try:
+        repair_dt = datetime.strptime(repair_dt_text, '%Y-%m-%d').date() if repair_dt_text else None
+    except ValueError:
+        repair_dt = None
+
     begin_time = normalize_to_datetime(row.get('begin'))
     end_time = normalize_to_datetime(row.get('end'))
     begin_date = begin_time.date() if begin_time else None
     end_date = end_time.date() if end_time else None
+    latest_alert_date = None
+    if end_date:
+        latest_alert_date = end_date - timedelta(days=1)
+    elif begin_date:
+        latest_alert_date = begin_date
 
     status = {
         'is_out_of_window': False,
         'reason': '',
         'begin_date': begin_date.isoformat() if begin_date else None,
         'end_date': end_date.isoformat() if end_date else None,
+        'repair_dt': repair_dt.isoformat() if repair_dt else repair_dt_text,
+        'latest_alert_dt': latest_alert_date.isoformat() if latest_alert_date else None,
         'lookback_start': lookback_start.isoformat(),
     }
 
-    if begin_date and begin_date < lookback_start:
+    if latest_alert_date and latest_alert_date < lookback_start:
         status['is_out_of_window'] = True
-        status['reason'] = 'begin_before_lookback'
+        status['reason'] = 'latest_alert_dt_before_lookback'
         return status
-
-    if begin_date and end_date:
-        covered_days = max((end_date - begin_date).days, 0)
-        if covered_days > lookback_days:
-            status['is_out_of_window'] = True
-            status['reason'] = 'window_span_exceeded'
-            return status
 
     return status
 
@@ -397,15 +399,11 @@ def step1_scan_alerts(now=None):
                     begin_text = window_status.get('begin_date') or '未知'
                     end_text = window_status.get('end_date') or '未知'
                     alert['status'] = 'skipped_out_of_window'
-                    if window_status['reason'] == 'begin_before_lookback':
+                    if window_status['reason'] == 'latest_alert_dt_before_lookback':
                         alert['error'] = (
                             f"告警窗口 begin={begin_text}, end={end_text}，"
-                            f"begin 早于自动修复窗口起点 {window_status['lookback_start']}，转人工处理"
-                        )
-                    else:
-                        alert['error'] = (
-                            f"告警窗口 begin={begin_text}, end={end_text}，"
-                            "覆盖天数超过自动修复窗口7天，转人工处理"
+                            f"最新告警日期 dt={window_status.get('latest_alert_dt') or window_status.get('repair_dt') or '未知'} 早于自动修复窗口起点 "
+                            f"{window_status['lookback_start']}，转人工处理"
                         )
                 alerts.append(alert)
         
@@ -432,7 +430,7 @@ def step1_scan_alerts(now=None):
 
     out_of_window_count = sum(1 for alert in unique_alerts if alert.get('status') == 'skipped_out_of_window')
     if out_of_window_count:
-        log(f"  ⚠️ 超出7天自动修复窗口: {out_of_window_count} 个")
+        log(f"  ⚠️ 超出8天自动修复窗口: {out_of_window_count} 个")
     
     return unique_alerts
 
@@ -1094,6 +1092,7 @@ def summarize_repair_outcome(alerts, completed_tasks, failed_tasks, manual_revie
         'resolved_count': len(resolved_tasks),
         'remaining_count': len(remaining_tasks),
         'manual_review_count': len(remaining_tasks),
+        'display_pending_tables_count': len(set(remaining_tables) | set(task['table'] for task in remaining_tasks)),
         'rerun_tasks': rerun_tasks,
         'resolved_tasks': resolved_tasks,
         'remaining_tasks': remaining_tasks,
@@ -1168,9 +1167,11 @@ def generate_tv_report(summary, fuyan_results):
     report_lines.append(f"  • 复验启动: {len(fuyan_results)} 个")
     report_lines.append("")
     
-    report_lines.append(
-        f"📋 当前未处理告警表: {len(summary['post_fuyan_remaining_tables'])} 个"
+    pending_tables_count = summary.get(
+        'display_pending_tables_count',
+        len(summary['post_fuyan_remaining_tables'])
     )
+    report_lines.append(f"📋 当前未处理告警表: {pending_tables_count} 个")
     report_lines.append("")
 
     if summary.get('rerun_tasks'):

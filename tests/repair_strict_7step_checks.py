@@ -128,6 +128,19 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(alerts[0]["table"], "dwd_old_table")
         self.assertEqual(alerts[0]["status"], "skipped_out_of_window")
 
+    def test_get_alert_window_status_uses_latest_alert_dt_not_begin_date(self):
+        module = load_module()
+        row = {
+            "begin": datetime(2026, 5, 5, 0, 0, 0),
+            "end": datetime(2026, 5, 12, 0, 0, 0),
+        }
+
+        status = module.get_alert_window_status(row, now=datetime(2026, 5, 13, 10, 0, 0), lookback_days=7)
+
+        self.assertFalse(status["is_out_of_window"])
+        self.assertEqual(status["repair_dt"], "2026-05-05")
+        self.assertEqual(status["latest_alert_dt"], "2026-05-11")
+
     def test_step2_search_in_workflow_prefers_non_datax_candidate_when_names_conflict(self):
         module = load_module()
 
@@ -178,6 +191,28 @@ class RepairStrict7StepTests(unittest.TestCase):
 
         with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get):
             result = module.step2_search_in_workflow("wf-1", "dwb_asset_info")
+
+        self.assertIsNone(result)
+
+    def test_step2_search_in_workflow_requires_exact_full_table_name_match(self):
+        module = load_module()
+
+        def fake_ds_api_get(endpoint):
+            if endpoint == "/projects/158514956085248/workflow-definition/wf-1":
+                return True, {
+                    "processDefinition": {"name": "ODS_FOX_ARCTICFOX"},
+                    "taskDefinitionList": [
+                        {
+                            "code": "task-1",
+                            "name": "ods_arcticfox_collect_recovery",
+                            "taskType": "SHELL",
+                        }
+                    ],
+                }, ""
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get):
+            result = module.step2_search_in_workflow("wf-1", "dwd_fox_collect_recovery")
 
         self.assertIsNone(result)
 
@@ -317,7 +352,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(tasks[0]["workflow_code"], "")
         self.assertEqual(tasks[0]["workflow_name"], "未找到")
 
-    def test_get_remaining_alert_tables_excludes_out_of_window_rows_by_begin_end(self):
+    def test_get_remaining_alert_tables_keeps_rows_when_latest_alert_dt_is_within_window(self):
         module = load_module()
         rows = [
             {
@@ -348,7 +383,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"alert.db_config": fake_db_module}):
             tables = module.get_remaining_alert_tables(now=datetime(2026, 5, 10, 10, 0, 0))
 
-        self.assertEqual(tables, {"dwd_recent_table"})
+        self.assertEqual(tables, {"dwd_long_window_table", "dwd_recent_table"})
 
     def test_summarize_repair_outcome_keeps_out_of_window_alert_in_manual_review(self):
         module = load_module()
