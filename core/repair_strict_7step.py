@@ -32,10 +32,11 @@ MANUAL_REVIEW_STATE_FILE = f"{WORKSPACE}/auto_repair_records/manual_review_state
 
 # 复验工作流
 FUYAN_WORKFLOWS = [
+    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728', 'level': '1'},
     {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296', 'level': 'all'},
     {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456', 'level': '3'},
 ]
-BLOCKED_FUYAN_WORKFLOW_NAMES = {'每小时复验1级表数据(D-1)'}
+BLOCKED_FUYAN_WORKFLOW_NAMES = set()
 
 # 维护任务关键词（排除）
 MAINTENANCE_KEYWORDS = ['补充', '删除', '清理', '修复', '历史', '冗余', '临时', 'test', 'copy', '手插入']
@@ -504,6 +505,65 @@ def should_block_scheduled_workflow_match(location):
     return is_subprocess_task(location.get('task_type'))
 
 
+def get_fuyan_start_node(workflow):
+    start_node = workflow.get('start_node') or workflow.get('startNodeList') or ''
+    if start_node:
+        return str(start_node).strip()
+
+    if str(workflow.get('level') or '').strip().lower() == '1':
+        return '复验1级表'
+    return ''
+
+
+def resolve_fuyan_start_node_code(workflow):
+    start_node_name = get_fuyan_start_node(workflow)
+    if not start_node_name:
+        return ''
+
+    success, detail, _ = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-definition/{workflow['code']}")
+    if not success:
+        return start_node_name
+
+    for task in detail.get('taskDefinitionList', []):
+        if str(task.get('name') or '').strip() == start_node_name:
+            task_code = task.get('code')
+            if task_code not in (None, ''):
+                return str(task_code)
+
+    return start_node_name
+
+
+def select_fuyan_workflows(alerts):
+    """dwb 仅走1级，其余走1级 + 每日全级别 + 3级。"""
+    has_dwb_alert = False
+    for alert in alerts or []:
+        table = (alert.get('table') or '').lower()
+        if table.startswith('dwb_'):
+            has_dwb_alert = True
+            break
+
+    selected = []
+    for workflow in FUYAN_WORKFLOWS:
+        name = workflow.get('name', '')
+        level = str(workflow.get('level') or '').strip().lower()
+        if name in BLOCKED_FUYAN_WORKFLOW_NAMES:
+            continue
+
+        if has_dwb_alert:
+            if level == '1':
+                selected.append(workflow)
+            continue
+
+        if level == '1':
+            selected.append(workflow)
+        elif level == '3':
+            selected.append(workflow)
+        elif level == 'all' and name.startswith('每日复验全级别数据'):
+            selected.append(workflow)
+
+    return selected
+
+
 def step2_find_locations(alerts):
     """步骤2: 查找工作流位置 - 优化版（缓存工作流列表）"""
     log("\n" + "="*70)
@@ -929,10 +989,7 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
     log(f"\n5.2 执行复验工作流...")
     fuyan_results = []
 
-    available_fuyan_workflows = [
-        fuyan for fuyan in FUYAN_WORKFLOWS
-        if fuyan.get('name') not in BLOCKED_FUYAN_WORKFLOW_NAMES
-    ]
+    available_fuyan_workflows = select_fuyan_workflows(alerts)
     if not available_fuyan_workflows:
         blocked_names = "、".join(sorted(BLOCKED_FUYAN_WORKFLOW_NAMES))
         if blocked_names:
@@ -951,6 +1008,10 @@ def step5_execute_fuyan(completed_tasks, failed_tasks, alerts):
             'tenantCode': 'dolphinscheduler',
             'dryRun': 0,
         }
+        start_node = resolve_fuyan_start_node_code(fuyan)
+        if start_node:
+            data['startNodeList'] = start_node
+            data['taskDependType'] = 'TASK_ONLY'
 
         success, result, msg, _ = start_workflow_instance_with_fallbacks(
             FUYAN_PROJECT_CODE,

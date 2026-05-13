@@ -832,9 +832,9 @@ class RepairStrict7StepTests(unittest.TestCase):
             mock.patch.object(module.os, "makedirs"), \
             mock.patch("builtins.open", mock.mock_open()):
             results = module.step5_execute_fuyan(
-                completed_tasks=[{"table": "dwb_asset_info"}],
+                completed_tasks=[{"table": "dwd_fox_mission_log"}],
                 failed_tasks=[],
-                alerts=[{"table": "dwb_asset_info"}],
+                alerts=[{"table": "dwd_fox_mission_log"}],
             )
 
         self.assertEqual(len(attempts), 2)
@@ -843,25 +843,60 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(results[0]["status"], "success")
         self.assertEqual(results[0]["id"], 24680)
 
-    def test_step5_execute_fuyan_skips_blocked_level1_recheck_workflow(self):
+    def test_step5_execute_fuyan_selects_daily_level1_and_level3_for_non_dwb_tables(self):
+        module = load_module()
+        module.FUYAN_WORKFLOWS = [
+            {"name": "每日复验全级别数据(W-1)", "code": "wf-daily", "level": "all"},
+            {"name": "每小时复验1级表数据(D-1)", "code": "wf-l1", "level": "1"},
+            {"name": "两小时复验3级表数据(D-1)", "code": "wf-l3", "level": "3"},
+        ]
+        started_codes = []
+
+        def fake_start(project_code, workflow_code, data, dt=None):
+            started_codes.append(workflow_code)
+            return True, {"data": [len(started_codes)]}, "", "2026-05-13 12:00:00"
+
+        with mock.patch.object(module, "start_workflow_instance_with_fallbacks", side_effect=fake_start), \
+            mock.patch.object(module, "ds_api_get", return_value=(True, {"taskDefinitionList": [{"code": "task-l1", "name": "复验1级表"}]}, "")), \
+            mock.patch.object(module, "log"), \
+            mock.patch.object(module.os, "makedirs"), \
+            mock.patch("builtins.open", mock.mock_open()):
+            module.step5_execute_fuyan(
+                completed_tasks=[{"table": "dwd_fox_mission_log"}],
+                failed_tasks=[],
+                alerts=[{"table": "dwd_fox_mission_log"}],
+            )
+
+        self.assertEqual(started_codes, ["wf-daily", "wf-l1", "wf-l3"])
+
+    def test_step5_execute_fuyan_only_runs_level1_node_for_level1_workflow(self):
         module = load_module()
         module.FUYAN_WORKFLOWS = [
             {"name": "每小时复验1级表数据(D-1)", "code": "wf-l1", "level": "1"},
         ]
-        module.BLOCKED_FUYAN_WORKFLOW_NAMES = {"每小时复验1级表数据(D-1)"}
+        captured = {}
 
-        with mock.patch.object(module, "ds_api_post") as post_mock, \
+        def fake_start(project_code, workflow_code, data, dt=None):
+            captured["project_code"] = project_code
+            captured["workflow_code"] = workflow_code
+            captured["data"] = dict(data)
+            return True, {"data": [12345]}, "", "2026-05-13 12:00:00"
+
+        with mock.patch.object(module, "start_workflow_instance_with_fallbacks", side_effect=fake_start), \
+            mock.patch.object(module, "ds_api_get", return_value=(True, {"taskDefinitionList": [{"code": "task-l1", "name": "复验1级表"}]}, "")), \
             mock.patch.object(module, "log"), \
             mock.patch.object(module.os, "makedirs"), \
             mock.patch("builtins.open", mock.mock_open()):
             results = module.step5_execute_fuyan(
-                completed_tasks=[{"table": "dwb_asset_info"}],
+                completed_tasks=[{"table": "dwd_fox_mission_log"}],
                 failed_tasks=[],
-                alerts=[{"table": "dwb_asset_info"}],
+                alerts=[{"table": "dwd_fox_mission_log"}],
             )
 
-        post_mock.assert_not_called()
-        self.assertEqual(results, [])
+        self.assertEqual(captured["workflow_code"], "wf-l1")
+        self.assertEqual(captured["data"]["startNodeList"], "task-l1")
+        self.assertEqual(captured["data"]["taskDependType"], "TASK_ONLY")
+        self.assertEqual(results[0]["status"], "success")
 
 
 if __name__ == "__main__":
