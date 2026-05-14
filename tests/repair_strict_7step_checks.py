@@ -872,7 +872,7 @@ class RepairStrict7StepTests(unittest.TestCase):
     def test_step5_execute_fuyan_only_runs_level1_node_for_level1_workflow(self):
         module = load_module()
         module.FUYAN_WORKFLOWS = [
-            {"name": "每小时复验1级表数据(D-1)", "code": "wf-l1", "level": "1"},
+            {"name": "每小时复验1级表数据(D-1)", "code": "wf-l1", "level": "1", "start_node": "task-l1"},
         ]
         captured = {}
 
@@ -883,7 +883,6 @@ class RepairStrict7StepTests(unittest.TestCase):
             return True, {"data": [12345]}, "", "2026-05-13 12:00:00"
 
         with mock.patch.object(module, "start_workflow_instance_with_fallbacks", side_effect=fake_start), \
-            mock.patch.object(module, "ds_api_get", return_value=(True, {"taskDefinitionList": [{"code": "task-l1", "name": "复验1级表"}]}, "")), \
             mock.patch.object(module, "log"), \
             mock.patch.object(module.os, "makedirs"), \
             mock.patch("builtins.open", mock.mock_open()):

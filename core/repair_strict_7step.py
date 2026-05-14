@@ -32,7 +32,7 @@ MANUAL_REVIEW_STATE_FILE = f"{WORKSPACE}/auto_repair_records/manual_review_state
 
 # 复验工作流
 FUYAN_WORKFLOWS = [
-    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728', 'level': '1'},
+    {'name': '每小时复验1级表数据(D-1)', 'code': '158515019593728', 'level': '1', 'start_node': '158515019593729'},
     {'name': '每日复验全级别数据(W-1)', 'code': '158515019703296', 'level': 'all'},
     {'name': '两小时复验3级表数据(D-1)', 'code': '158515019667456', 'level': '3'},
 ]
