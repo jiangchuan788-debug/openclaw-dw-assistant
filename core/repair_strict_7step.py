@@ -260,7 +260,7 @@ def resolve_alert_dt(row, now=None):
 
 
 def get_alert_window_status(row, now=None, lookback_days=8):
-    """根据告警最近一次命中的日期判断是否超出自动修复范围。"""
+    """根据告警窗口跨度判断是否超出自动修复范围。"""
     if now is None:
         now = datetime.now()
 
@@ -276,6 +276,9 @@ def get_alert_window_status(row, now=None, lookback_days=8):
     end_time = normalize_to_datetime(row.get('end'))
     begin_date = begin_time.date() if begin_time else None
     end_date = end_time.date() if end_time else None
+    window_span_days = None
+    if begin_time and end_time:
+        window_span_days = (end_time - begin_time).total_seconds() / 86400
     latest_alert_date = None
     if end_date:
         latest_alert_date = end_date - timedelta(days=1)
@@ -290,7 +293,14 @@ def get_alert_window_status(row, now=None, lookback_days=8):
         'repair_dt': repair_dt.isoformat() if repair_dt else repair_dt_text,
         'latest_alert_dt': latest_alert_date.isoformat() if latest_alert_date else None,
         'lookback_start': lookback_start.isoformat(),
+        'window_limit_days': lookback_days,
+        'window_span_days': window_span_days,
     }
+
+    if window_span_days is not None and window_span_days > lookback_days:
+        status['is_out_of_window'] = True
+        status['reason'] = 'window_span_exceeds_limit'
+        return status
 
     if latest_alert_date and latest_alert_date < lookback_start:
         status['is_out_of_window'] = True
@@ -400,7 +410,18 @@ def step1_scan_alerts(now=None):
                     begin_text = window_status.get('begin_date') or '未知'
                     end_text = window_status.get('end_date') or '未知'
                     alert['status'] = 'skipped_out_of_window'
-                    if window_status['reason'] == 'latest_alert_dt_before_lookback':
+                    if window_status['reason'] == 'window_span_exceeds_limit':
+                        span_days = window_status.get('window_span_days')
+                        span_text = (
+                            f"{span_days:.1f}".rstrip('0').rstrip('.')
+                            if isinstance(span_days, (int, float))
+                            else '未知'
+                        )
+                        alert['error'] = (
+                            f"告警窗口 begin={begin_text}, end={end_text}，"
+                            f"跨度 {span_text} 天超过自动修复阈值 {window_status.get('window_limit_days') or 8} 天，转人工处理"
+                        )
+                    elif window_status['reason'] == 'latest_alert_dt_before_lookback':
                         alert['error'] = (
                             f"告警窗口 begin={begin_text}, end={end_text}，"
                             f"最新告警日期 dt={window_status.get('latest_alert_dt') or window_status.get('repair_dt') or '未知'} 早于自动修复窗口起点 "
