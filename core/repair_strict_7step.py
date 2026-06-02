@@ -727,8 +727,70 @@ def build_redundant_data_manual_review_reason():
     return '疑似当前层数据多于底层，重跑一次后仍未恢复，建议检查底层是否需要删数，并人工判断修复'
 
 
-def apply_repair_strategy(tasks, strategy_state):
-    """应用修复策略：疑似冗余数据仅允许自动重跑一次"""
+def _parse_state_datetime(value):
+    if not value:
+        return None
+
+    try:
+        return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+    except (TypeError, ValueError):
+        return None
+
+
+def has_redundant_retry_attempted_today(table_state, now=None):
+    """判断疑似冗余数据是否已在当天尝试过自动重跑"""
+    if now is None:
+        now = datetime.now()
+
+    timestamps = [
+        table_state.get('last_attempt_at'),
+        table_state.get('last_completed_at'),
+        table_state.get('updated_at'),
+    ]
+    for value in timestamps:
+        parsed = _parse_state_datetime(value)
+        if parsed and parsed.date() == now.date():
+            return True
+
+    return False
+
+
+def reset_redundant_retry_state_for_resolved_tables(strategy_state, active_alerts, now=None):
+    """当天后续扫描若已无该表告警，则重置该表当天的冗余重跑状态"""
+    if now is None:
+        now = datetime.now()
+
+    active_tables = {
+        alert.get('table')
+        for alert in active_alerts
+        if alert.get('table')
+    }
+
+    tables_to_delete = []
+    for table, dt_states in list(strategy_state.items()):
+        if table in active_tables:
+            continue
+
+        dts_to_delete = []
+        for dt, table_state in list(dt_states.items()):
+            if has_redundant_retry_attempted_today(table_state, now=now):
+                dts_to_delete.append(dt)
+
+        for dt in dts_to_delete:
+            del dt_states[dt]
+
+        if not dt_states:
+            tables_to_delete.append(table)
+
+    for table in tables_to_delete:
+        del strategy_state[table]
+
+
+def apply_repair_strategy(tasks, strategy_state, now=None):
+    """应用修复策略：疑似冗余数据当天仅允许自动重跑一次"""
+    if now is None:
+        now = datetime.now()
+
     runnable_tasks = []
     manual_review_tasks = []
 
@@ -738,7 +800,7 @@ def apply_repair_strategy(tasks, strategy_state):
             continue
 
         table_state = strategy_state.get(task['table'], {}).get(task['dt'], {})
-        if table_state.get('redundant_retry_done'):
+        if has_redundant_retry_attempted_today(table_state, now=now):
             manual_task = dict(task)
             manual_task['status'] = 'skipped_manual_review'
             manual_task['error'] = build_redundant_data_manual_review_reason()
@@ -749,9 +811,9 @@ def apply_repair_strategy(tasks, strategy_state):
     return runnable_tasks, manual_review_tasks
 
 
-def record_redundant_retry_attempt(strategy_state, completed_tasks):
-    """记录疑似冗余数据告警的首次自动重跑尝试"""
-    for task in completed_tasks:
+def record_redundant_retry_attempt(strategy_state, attempted_tasks):
+    """记录疑似冗余数据告警的自动重跑尝试时间"""
+    for task in attempted_tasks:
         if not is_suspected_redundant_data(task):
             continue
 
@@ -759,7 +821,10 @@ def record_redundant_retry_attempt(strategy_state, completed_tasks):
         dt_state = table_state.setdefault(task['dt'], {})
         dt_state['redundant_retry_done'] = True
         dt_state.setdefault('manual_review_required', False)
-        dt_state['last_completed_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        dt_state['last_attempt_at'] = timestamp
+        dt_state['last_completed_at'] = timestamp
+        dt_state['updated_at'] = timestamp
 
 
 def record_manual_review_tasks(strategy_state, manual_review_tasks):
@@ -938,12 +1003,32 @@ def step4_wait_and_check(running_instances, poll_interval=30, max_wait=1800):
         log(f"  还有 {len(pending)} 个任务运行中，{poll_interval}秒后再次检查...")
         time.sleep(poll_interval)
     
-    # 处理超时任务
+    # 处理超时任务：补查一次终态，避免实例在观察窗口后半段已完成却仍被误判为失败
     if pending:
         log(f"\n⚠️  等待超时，以下任务未完成:")
         for item in pending:
-            log(f"    - {item['table']}: {item['instance_id']}")
+            table = item['table']
+            instance_id = item['instance_id']
+            log(f"    - {table}: {instance_id}")
+
+            success, data, msg = ds_api_get(f"/projects/{PROJECT_CODE}/workflow-instances/{instance_id}")
+            if success and data:
+                state = data.get('state', 'UNKNOWN')
+                if state in ['SUCCESS', 'FINISHED']:
+                    log(f"  ✅ {table}: 超时后补查发现已完成 ({state})")
+                    item['task']['final_status'] = 'success'
+                    item['task']['end_time'] = data.get('endTime')
+                    completed_tasks.append(item['task'])
+                    continue
+                if state in ['FAILED', 'KILL', 'STOP']:
+                    log(f"  ❌ {table}: 超时后补查发现已失败 ({state})")
+                    item['task']['final_status'] = 'failed'
+                    item['task']['error'] = f"启动成功，但最终执行失败，状态: {state}"
+                    failed_tasks.append(item['task'])
+                    continue
+
             item['task']['final_status'] = 'timeout'
+            item['task']['error'] = '启动成功，但在观察窗口内未完成，请稍后在 DolphinScheduler 查看最终状态'
             failed_tasks.append(item['task'])
     
     log(f"\n📊 最终结果:")
@@ -1368,15 +1453,18 @@ def main():
     
     # 步骤1: 扫描告警
     alerts = step1_scan_alerts()
+    strategy_state = load_manual_review_state()
+    reset_redundant_retry_state_for_resolved_tables(strategy_state, alerts)
+    save_manual_review_state(strategy_state)
+
     if not alerts:
         log("\n✅ 没有需要处理的告警，流程结束")
         return
-    
+
     # 步骤2: 查找工作流
     tasks = step2_find_locations(alerts)
 
-    # 策略判断：疑似冗余数据告警首次允许重跑，后续转人工处理
-    strategy_state = load_manual_review_state()
+    # 策略判断：疑似冗余数据告警当天首次允许重跑，后续转人工处理
     out_of_window_tasks = []
     candidate_tasks = []
     for task in tasks:
@@ -1393,7 +1481,7 @@ def main():
     # 步骤3-4: 分批启动修复并动态监控（最多并行5个）
     results, completed_tasks, failed_tasks = execute_repairs_in_batches(runnable_tasks, max_parallel=5)
 
-    record_redundant_retry_attempt(strategy_state, completed_tasks)
+    record_redundant_retry_attempt(strategy_state, completed_tasks + failed_tasks)
     record_manual_review_tasks(strategy_state, manual_review_tasks)
     save_manual_review_state(strategy_state)
 

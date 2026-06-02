@@ -533,16 +533,154 @@ class RepairStrict7StepTests(unittest.TestCase):
                 "2026-04-27": {
                     "redundant_retry_done": True,
                     "manual_review_required": False,
+                    "last_attempt_at": "2026-04-27 09:00:00",
                 }
             }
         }
 
-        runnable, manual_review = module.apply_repair_strategy(tasks, strategy_state)
+        runnable, manual_review = module.apply_repair_strategy(
+            tasks,
+            strategy_state,
+            now=datetime(2026, 4, 27, 10, 0, 0),
+        )
 
         self.assertEqual(runnable, [])
         self.assertEqual(len(manual_review), 1)
         self.assertEqual(manual_review[0]["status"], "skipped_manual_review")
         self.assertIn("底层是否需要删数", manual_review[0]["error"])
+
+    def test_apply_repair_strategy_allows_redundant_retry_again_on_next_day(self):
+        module = load_module()
+        tasks = [
+            {
+                "table": "dwd_asset_auto_withhold",
+                "dt": "2026-05-25",
+                "diff": -11,
+            }
+        ]
+        strategy_state = {
+            "dwd_asset_auto_withhold": {
+                "2026-05-25": {
+                    "redundant_retry_done": True,
+                    "manual_review_required": True,
+                    "last_completed_at": "2026-06-01 08:00:00",
+                    "updated_at": "2026-06-01 08:05:00",
+                }
+            }
+        }
+
+        runnable, manual_review = module.apply_repair_strategy(
+            tasks,
+            strategy_state,
+            now=datetime(2026, 6, 2, 10, 35, 10),
+        )
+
+        self.assertEqual([item["table"] for item in runnable], ["dwd_asset_auto_withhold"])
+        self.assertEqual(manual_review, [])
+
+    def test_reset_redundant_retry_state_for_resolved_tables_clears_today_state(self):
+        module = load_module()
+        strategy_state = {
+            "dwd_asset_auto_withhold": {
+                "2026-05-25": {
+                    "redundant_retry_done": True,
+                    "manual_review_required": True,
+                    "last_attempt_at": "2026-06-02 08:00:00",
+                    "updated_at": "2026-06-02 08:05:00",
+                }
+            },
+            "dwd_other_table": {
+                "2026-05-26": {
+                    "redundant_retry_done": True,
+                    "manual_review_required": True,
+                    "last_attempt_at": "2026-06-01 08:00:00",
+                    "updated_at": "2026-06-01 08:05:00",
+                }
+            },
+        }
+
+        module.reset_redundant_retry_state_for_resolved_tables(
+            strategy_state,
+            active_alerts=[],
+            now=datetime(2026, 6, 2, 10, 35, 10),
+        )
+
+        self.assertNotIn("dwd_asset_auto_withhold", strategy_state)
+        self.assertIn("dwd_other_table", strategy_state)
+
+    def test_step4_wait_and_check_rechecks_timed_out_instance_and_recovers_success(self):
+        module = load_module()
+        task = {
+            "table": "ods_repay_auto_withhold_asset",
+            "dt": "2026-05-24",
+            "status": "success",
+            "instance_id": 1092435,
+        }
+        running_instances = [
+            {
+                "table": "ods_repay_auto_withhold_asset",
+                "instance_id": 1092435,
+                "task": task,
+            }
+        ]
+        responses = [
+            (True, {"state": "RUNNING_EXECUTION"}, ""),
+            (True, {"state": "SUCCESS", "endTime": "2026-06-01 07:37:10"}, ""),
+        ]
+
+        with mock.patch.object(module, "ds_api_get", side_effect=responses), \
+            mock.patch.object(module.time, "time", side_effect=[0, 0, 0, 2]), \
+            mock.patch.object(module, "log"), \
+            mock.patch("time.sleep"):
+            completed_tasks, failed_tasks = module.step4_wait_and_check(
+                running_instances,
+                poll_interval=10,
+                max_wait=1,
+            )
+
+        self.assertEqual(len(completed_tasks), 1)
+        self.assertEqual(completed_tasks[0]["table"], "ods_repay_auto_withhold_asset")
+        self.assertEqual(completed_tasks[0]["final_status"], "success")
+        self.assertEqual(completed_tasks[0]["end_time"], "2026-06-01 07:37:10")
+        self.assertEqual(failed_tasks, [])
+
+    def test_step4_wait_and_check_marks_true_timeout_with_clear_message(self):
+        module = load_module()
+        task = {
+            "table": "ods_repay_auto_withhold_asset",
+            "dt": "2026-05-24",
+            "status": "success",
+            "instance_id": 1092435,
+        }
+        running_instances = [
+            {
+                "table": "ods_repay_auto_withhold_asset",
+                "instance_id": 1092435,
+                "task": task,
+            }
+        ]
+        responses = [
+            (True, {"state": "RUNNING_EXECUTION"}, ""),
+            (True, {"state": "RUNNING_EXECUTION"}, ""),
+        ]
+
+        with mock.patch.object(module, "ds_api_get", side_effect=responses), \
+            mock.patch.object(module.time, "time", side_effect=[0, 0, 0, 2]), \
+            mock.patch.object(module, "log"), \
+            mock.patch("time.sleep"):
+            completed_tasks, failed_tasks = module.step4_wait_and_check(
+                running_instances,
+                poll_interval=10,
+                max_wait=1,
+            )
+
+        self.assertEqual(completed_tasks, [])
+        self.assertEqual(len(failed_tasks), 1)
+        self.assertEqual(failed_tasks[0]["final_status"], "timeout")
+        self.assertEqual(
+            failed_tasks[0]["error"],
+            "启动成功，但在观察窗口内未完成，请稍后在 DolphinScheduler 查看最终状态",
+        )
 
     def test_generate_tv_report_lists_manual_review_items(self):
         module = load_module()
